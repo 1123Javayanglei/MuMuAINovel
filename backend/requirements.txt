@@ -19,6 +19,15 @@ anthropic==0.72.0
 httpx==0.28.1
 python-dotenv==1.0.0
 
+# NumPy版本锁定（兼容性要求）
+numpy==1.26.4
+
 # 向量数据库和Embedding (长期记忆系统)
 chromadb==1.3.2
-sentence-transformers>=2.3.1
+
+
+# Transformers（锁定兼容版本）
+transformers==4.35.2
+
+# Sentence Transformers（基于PyTorch的文本embedding库）
+sentence-transformers==2.3.1

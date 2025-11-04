@@ -40,6 +40,12 @@ Thumbs.db
 data/*.db
 backend/data/*.db
 
+# ChromaDB数据库（不包含在镜像中，会在运行时生成）
+backend/data/chroma_db/
+
+# 注意：backend/data/models/ 目录需要打包（包含预下载的Embedding模型）
+# 所以不要添加到 .dockerignore 中
+
 # 日志文件
 logs/
 *.log

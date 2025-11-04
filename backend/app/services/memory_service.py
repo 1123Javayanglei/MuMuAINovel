@@ -13,6 +13,8 @@ logger = get_logger(__name__)
 # 配置离线模式，避免联网检查
 os.environ['TRANSFORMERS_OFFLINE'] = '1'
 os.environ['HF_DATASETS_OFFLINE'] = '1'
+os.environ['HF_HUB_OFFLINE'] = '1'  # 禁用HuggingFace Hub联网
+os.environ['SENTENCE_TRANSFORMERS_HOME'] = 'data/models'  # 设置模型缓存目录
 
 
 class MemoryService:

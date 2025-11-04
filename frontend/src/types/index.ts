@@ -18,7 +18,7 @@ export interface Settings {
   api_provider: string;
   api_key: string;
   api_base_url: string;
-  model_name: string;
+  llm_model: string;
   temperature: number;
   max_tokens: number;
   preferences?: string;
@@ -30,7 +30,7 @@ export interface SettingsUpdate {
   api_provider?: string;
   api_key?: string;
   api_base_url?: string;
-  model_name?: string;
+  llm_model?: string;
   temperature?: number;
   max_tokens?: number;
   preferences?: string;
