@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { Modal, Progress, Spin, Alert, Tabs, Card, Tag, List, Empty, Statistic, Row, Col, Button } from 'antd';
-import { 
-  ThunderboltOutlined, 
-  BulbOutlined, 
-  FireOutlined, 
+import {
+  ThunderboltOutlined,
+  BulbOutlined,
+  FireOutlined,
   HeartOutlined,
   TeamOutlined,
   TrophyOutlined,
@@ -30,6 +30,11 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
     if (visible && chapterId) {
       fetchAnalysisStatus();
     }
+    
+    // 清理函数：组件卸载或关闭时清除轮询
+    return () => {
+      // 清除可能存在的轮询
+    };
   }, [visible, chapterId]);
 
   const fetchAnalysisStatus = async () => {
@@ -117,22 +122,15 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
         throw new Error(errorData.detail || '触发分析失败');
       }
       
-      const result = await response.json();
-      setTask({
-        task_id: result.task_id,
-        chapter_id: chapterId,
-        status: 'pending',
-        progress: 0
-      });
-      
-      // 开始轮询
-      startPolling();
+      // 触发成功后立即关闭Modal，让父组件的状态管理接管
+      onClose();
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setLoading(false);
     }
   };
+
 
   const renderStatusIcon = () => {
     if (!task) return null;
@@ -480,7 +478,7 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
         <Button key="close" onClick={onClose}>
           关闭
         </Button>,
-        !task && (
+        !task && !loading && (
           <Button
             key="analyze"
             type="primary"
@@ -491,19 +489,30 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
             开始分析
           </Button>
         ),
-        task && (task.status === 'failed' || task.status === 'completed') && (
+        task && (task.status === 'failed') && (
           <Button
             key="reanalyze"
             type="primary"
             icon={<ReloadOutlined />}
             onClick={triggerAnalysis}
             loading={loading}
-            danger={task.status === 'failed'}
+            danger
+          >
+            重新分析
+          </Button>
+        ),
+        task && task.status === 'completed' && (
+          <Button
+            key="reanalyze"
+            type="default"
+            icon={<ReloadOutlined />}
+            onClick={triggerAnalysis}
+            loading={loading}
           >
             重新分析
           </Button>
         )
-      ]}
+      ].filter(Boolean)}
     >
       {loading && !task && (
         <div style={{ textAlign: 'center', padding: '48px' }}>
@@ -518,11 +527,6 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
           description={error}
           type="error"
           showIcon
-          action={
-            <Button size="small" danger onClick={triggerAnalysis}>
-              开始分析
-            </Button>
-          }
         />
       )}
       

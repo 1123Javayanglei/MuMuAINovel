@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Card, List, Button, Space, Empty, Tag, Spin, Alert, Switch, Drawer, message, Progress } from 'antd';
+import { Card, List, Button, Space, Empty, Tag, Spin, Alert, Switch, Drawer, message } from 'antd';
 import {
   EyeOutlined,
   EyeInvisibleOutlined,
   MenuOutlined,
-  ReloadOutlined,
   LeftOutlined,
   RightOutlined,
 } from '@ant-design/icons';
@@ -72,8 +71,6 @@ const ChapterAnalysis: React.FC = () => {
   const [showAnnotations, setShowAnnotations] = useState(true);
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | undefined>();
   const [sidebarVisible, setSidebarVisible] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [analysisProgress, setAnalysisProgress] = useState(0);
   const [scrollToContentAnnotation, setScrollToContentAnnotation] = useState<string | undefined>();
   const [scrollToSidebarAnnotation, setScrollToSidebarAnnotation] = useState<string | undefined>();
 
@@ -165,105 +162,6 @@ const ChapterAnalysis: React.FC = () => {
     }
   };
 
-  const handleReanalyze = async () => {
-    if (!selectedChapter) return;
-
-    let pollInterval: number | null = null;
-    let timeoutId: number | null = null;
-
-    try {
-      setAnalyzing(true);
-      setAnalysisProgress(0);
-      message.loading({ content: '开始分析章节...', key: 'analyze', duration: 0 });
-
-      // 触发分析任务
-      const triggerRes = await api.post(`/chapters/${selectedChapter.id}/analyze`);
-      const triggerData = triggerRes.data || triggerRes;
-      const taskId = triggerData.task_id;
-      
-      console.log('分析任务已创建:', taskId);
-
-      // 开始轮询状态
-      let pollCount = 0;
-      const maxPolls = 60; // 最多轮询60次（2分钟）
-      
-      pollInterval = setInterval(async () => {
-        pollCount++;
-        
-        if (pollCount > maxPolls) {
-          if (pollInterval) clearInterval(pollInterval);
-          if (timeoutId) clearTimeout(timeoutId);
-          setAnalyzing(false);
-          message.warning({ content: '分析超时，请稍后刷新页面查看结果', key: 'analyze' });
-          return;
-        }
-
-        try {
-          const statusRes = await api.get(`/chapters/${selectedChapter.id}/analysis/status`);
-          const responseData = statusRes.data || statusRes;
-          
-          if (!responseData) {
-            console.warn(`第${pollCount}次轮询：响应数据为空`);
-            return;
-          }
-          
-          const { status, progress, error_message } = responseData;
-          console.log(`第${pollCount}次轮询：status=${status}, progress=${progress}`);
-
-          setAnalysisProgress(progress || 0);
-
-          if (status === 'completed') {
-            if (pollInterval) clearInterval(pollInterval);
-            if (timeoutId) clearTimeout(timeoutId);
-            setAnalyzing(false);
-            message.success({ content: '分析完成！', key: 'analyze' });
-            
-            // 重新加载标注数据
-            try {
-              const annotationsRes = await api.get(`/chapters/${selectedChapter.id}/annotations`);
-              setAnnotationsData(annotationsRes.data || annotationsRes);
-            } catch (annotErr) {
-              console.error('加载标注数据失败:', annotErr);
-              message.warning('分析完成，但加载标注数据失败，请刷新页面');
-            }
-          } else if (status === 'failed') {
-            if (pollInterval) clearInterval(pollInterval);
-            if (timeoutId) clearTimeout(timeoutId);
-            setAnalyzing(false);
-            message.error({
-              content: `分析失败：${error_message || '未知错误'}`,
-              key: 'analyze'
-            });
-          }
-          // pending 或 running 状态继续轮询
-        } catch (pollErr) {
-          console.error(`第${pollCount}次轮询失败:`, pollErr);
-          // 轮询错误不中断，继续下一次轮询
-        }
-      }, 2000);
-
-      // 设置总超时（2分钟）
-      timeoutId = setTimeout(() => {
-        if (pollInterval) clearInterval(pollInterval);
-        setAnalyzing(false);
-        message.warning({ content: '分析超时，请稍后刷新页面查看结果', key: 'analyze' });
-      }, 120000);
-
-    } catch (err: any) {
-      // 清理定时器
-      if (pollInterval) clearInterval(pollInterval);
-      if (timeoutId) clearTimeout(timeoutId);
-      
-      setAnalyzing(false);
-      const errorMsg = err.response?.data?.detail || err.message || '触发分析失败';
-      console.error('触发分析失败:', errorMsg, err);
-      message.error({
-        content: errorMsg,
-        key: 'analyze'
-      });
-    }
-  };
-
   const hasAnnotations = annotationsData && annotationsData.annotations.length > 0;
 
   if (loading) {
@@ -352,15 +250,6 @@ const ChapterAnalysis: React.FC = () => {
                 </Space>
 
                 <Space>
-                  <Button
-                    icon={<ReloadOutlined />}
-                    onClick={handleReanalyze}
-                    loading={analyzing}
-                    disabled={analyzing || !selectedChapter?.content || selectedChapter.content.trim() === ''}
-                    title={!selectedChapter?.content || selectedChapter.content.trim() === '' ? '章节内容为空，无法分析' : ''}
-                  >
-                    {analyzing ? '分析中...' : '重新分析'}
-                  </Button>
                   {hasAnnotations && (
                     <>
                       <Switch
@@ -382,16 +271,7 @@ const ChapterAnalysis: React.FC = () => {
                 </Space>
               </div>
 
-              {analyzing && (
-                <div style={{ marginTop: 12 }}>
-                  <Progress percent={analysisProgress} size="small" status="active" />
-                  <span style={{ fontSize: 12, color: '#666', marginLeft: 8 }}>
-                    正在分析章节...
-                  </span>
-                </div>
-              )}
-
-              {!analyzing && hasAnnotations && annotationsData && (
+              {hasAnnotations && annotationsData && (
                 <div style={{ marginTop: 12, fontSize: 12, color: '#999' }}>
                   共有 {annotationsData.summary.total_annotations} 个标注：
                   {annotationsData.summary.hooks > 0 && ` 🎣${annotationsData.summary.hooks}个钩子`}
