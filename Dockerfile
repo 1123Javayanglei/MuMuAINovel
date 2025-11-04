@@ -57,7 +57,7 @@ RUN mkdir -p /app/data /app/logs /app/embedding
 
 # 复制预下载的Embedding模型到独立目录（避免被docker-compose的data挂载覆盖）
 # 这样可以避免首次运行时联网下载约420MB的模型文件
-COPY backend/data/embedding /app/embedding
+COPY backend/embedding /app/embedding
 
 # 复制环境变量示例文件
 COPY backend/.env.example ./.env.example
