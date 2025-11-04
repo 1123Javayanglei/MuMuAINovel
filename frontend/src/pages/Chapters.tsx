@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, Tooltip, InputNumber } from 'antd';
-import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined } from '@ant-design/icons';
+import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { useChapterSync } from '../store/hooks';
 import { projectApi, writingStyleApi } from '../services/api';
 import type { Chapter, ChapterUpdate, ApiError, WritingStyle } from '../types';
 import { cardStyles } from '../components/CardStyles';
+import ChapterAnalysis from '../components/ChapterAnalysis';
 
 const { TextArea } = Input;
 
@@ -23,6 +24,8 @@ export default function Chapters() {
   const [writingStyles, setWritingStyles] = useState<WritingStyle[]>([]);
   const [selectedStyleId, setSelectedStyleId] = useState<number | undefined>();
   const [targetWordCount, setTargetWordCount] = useState<number>(3000);
+  const [analysisVisible, setAnalysisVisible] = useState(false);
+  const [analysisChapterId, setAnalysisChapterId] = useState<string | null>(null);
 
   useEffect(() => {
     const handleResize = () => {
@@ -322,6 +325,11 @@ export default function Chapters() {
     });
   };
 
+  const handleShowAnalysis = (chapterId: string) => {
+    setAnalysisChapterId(chapterId);
+    setAnalysisVisible(true);
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{
@@ -372,15 +380,23 @@ export default function Chapters() {
                 }}
                 actions={isMobile ? undefined : [
                   <Button
-                    type="primary"
                     icon={<EditOutlined />}
                     onClick={() => handleOpenEditor(item.id)}
                   >
                     编辑内容
                   </Button>,
+                  <Tooltip title={!item.content || item.content.trim() === '' ? '请先生成章节内容' : ''}>
+                    <Button
+                      icon={<FundOutlined />}
+                      onClick={() => handleShowAnalysis(item.id)}
+                      disabled={!item.content || item.content.trim() === ''}
+                    >
+                      查看分析
+                    </Button>
+                  </Tooltip>,
                   <Button
                     type="text"
-                    icon={<EditOutlined />}
+                    icon={<SettingOutlined />}
                     onClick={() => handleOpenModal(item.id)}
                   >
                     修改信息
@@ -425,6 +441,15 @@ export default function Chapters() {
                         size="small"
                         title="编辑内容"
                       />
+                      <Tooltip title={!item.content || item.content.trim() === '' ? '请先生成章节内容' : '查看分析'}>
+                        <Button
+                          type="text"
+                          icon={<FundOutlined />}
+                          onClick={() => handleShowAnalysis(item.id)}
+                          size="small"
+                          disabled={!item.content || item.content.trim() === ''}
+                        />
+                      </Tooltip>
                       <Button
                         type="text"
                         icon={<SettingOutlined />}
@@ -654,6 +679,17 @@ export default function Chapters() {
           </Form.Item>
         </Form>
       </Modal>
+
+      {analysisChapterId && (
+        <ChapterAnalysis
+          chapterId={analysisChapterId}
+          visible={analysisVisible}
+          onClose={() => {
+            setAnalysisVisible(false);
+            setAnalysisChapterId(null);
+          }}
+        />
+      )}
     </div>
   );
 }

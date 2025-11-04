@@ -18,3 +18,7 @@ anthropic==0.18.0
 # 工具库
 httpx==0.26.0
 python-dotenv==1.0.0
+
+# 向量数据库和Embedding (长期记忆系统)
+chromadb>=0.5.0
+sentence-transformers>=2.3.1
