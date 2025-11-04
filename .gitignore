@@ -102,8 +102,7 @@ dmypy.json
 # Jupyter Notebook
 .ipynb_checkpoints
 
-data/*
-!/data/models/
+data/
 docs/
 data_old/
 backend/migrate_all_databases.py

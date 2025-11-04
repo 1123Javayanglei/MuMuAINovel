@@ -53,11 +53,11 @@ COPY backend/ ./
 COPY --from=frontend-builder /frontend/dist ./static
 
 # 创建必要的目录
-RUN mkdir -p /app/data /app/logs
+RUN mkdir -p /app/data /app/logs /app/embedding
 
-# 复制预下载的Embedding模型（如果存在）
+# 复制预下载的Embedding模型到独立目录（避免被docker-compose的data挂载覆盖）
 # 这样可以避免首次运行时联网下载约420MB的模型文件
-COPY backend/data/models /app/data/models
+COPY backend/data/models /app/embedding
 
 # 复制环境变量示例文件
 COPY backend/.env.example ./.env.example
@@ -74,7 +74,7 @@ ENV APP_PORT=8000
 ENV TRANSFORMERS_OFFLINE=1
 ENV HF_DATASETS_OFFLINE=1
 ENV HF_HUB_OFFLINE=1
-ENV SENTENCE_TRANSFORMERS_HOME=/app/data/models
+ENV SENTENCE_TRANSFORMERS_HOME=/app/embedding
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
