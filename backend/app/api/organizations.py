@@ -534,7 +534,7 @@ async def generate_organization(
         history = GenerationHistory(
             project_id=request.project_id,
             prompt=prompt,
-            generated_content=ai_response,
+            generated_content=ai_content, 
             model=user_ai_service.default_model
         )
         db.add(history)
