@@ -101,6 +101,9 @@ class SQLiteToPostgresMigrator:
         for sqlite_file in self.sqlite_files:
             await self._migrate_single_db(sqlite_file)
         
+        # 重置自增序列
+        await self._reset_sequences()
+        
         logger.info("✅ 所有数据迁移完成")
     
     async def _create_tables(self):
@@ -742,6 +745,46 @@ class SQLiteToPostgresMigrator:
                     return False
         
         return True
+    
+    async def _reset_sequences(self):
+        """重置PostgreSQL的自增序列到正确的值"""
+        logger.info("\n" + "="*60)
+        logger.info("重置自增序列...")
+        logger.info("="*60)
+        
+        # 需要重置序列的表（使用Integer自增主键的表）
+        tables_with_sequences = [
+            ('relationship_types', 'id'),
+            ('writing_styles', 'id'),
+            ('project_default_styles', 'id'),
+        ]
+        
+        async with self.pg_session_maker() as session:
+            for table_name, id_column in tables_with_sequences:
+                try:
+                    # 获取表中当前最大ID
+                    result = await session.execute(
+                        text(f"SELECT MAX({id_column}) FROM {table_name}")
+                    )
+                    max_id = result.scalar()
+                    
+                    if max_id is not None:
+                        # 重置序列到 max_id + 1
+                        sequence_name = f"{table_name}_{id_column}_seq"
+                        await session.execute(
+                            text(f"SELECT setval('{sequence_name}', :max_id, true)"),
+                            {"max_id": max_id}
+                        )
+                        logger.info(f"  ✅ {table_name}: 序列重置到 {max_id}")
+                    else:
+                        logger.info(f"  - {table_name}: 表为空，跳过序列重置")
+                        
+                except Exception as e:
+                    logger.warning(f"  ⚠️ {table_name}: 序列重置失败 - {str(e)}")
+            
+            await session.commit()
+        
+        logger.info("✅ 序列重置完成")
     
     async def cleanup(self):
         """清理资源"""
