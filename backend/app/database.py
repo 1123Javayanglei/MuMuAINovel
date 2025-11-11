@@ -21,7 +21,8 @@ from app.models import (
     Project, Outline, Character, Chapter, GenerationHistory,
     Settings, WritingStyle, ProjectDefaultStyle,
     RelationshipType, CharacterRelationship, Organization, OrganizationMember,
-    StoryMemory, PlotAnalysis, AnalysisTask, BatchGenerationTask
+    StoryMemory, PlotAnalysis, AnalysisTask, BatchGenerationTask,
+    RegenerationTask
 )
 
 # 引擎缓存：每个用户一个引擎
