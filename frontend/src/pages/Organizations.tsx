@@ -508,6 +508,13 @@ export default function Organizations() {
             </Select>
           </Form.Item>
 
+          <Form.Item
+            name="joined_at"
+            label="加入时间"
+          >
+            <Input placeholder="如：开山大典时、三年前、建立之初等" />
+          </Form.Item>
+
           <Form.Item>
             <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
               <Button onClick={() => setIsAddMemberModalOpen(false)}>取消</Button>
