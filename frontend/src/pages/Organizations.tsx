@@ -28,6 +28,8 @@ interface OrganizationMember {
   contribution: number;
   status: string;
   joined_at?: string;
+  left_at?: string;
+  notes?: string;
 }
 
 interface Character {
@@ -45,8 +47,11 @@ export default function Organizations() {
   const [characters, setCharacters] = useState<Character[]>([]);
   const [loading, setLoading] = useState(false);
   const [isAddMemberModalOpen, setIsAddMemberModalOpen] = useState(false);
+  const [isEditMemberModalOpen, setIsEditMemberModalOpen] = useState(false);
   const [isEditOrgModalOpen, setIsEditOrgModalOpen] = useState(false);
+  const [editingMember, setEditingMember] = useState<OrganizationMember | null>(null);
   const [form] = Form.useForm();
+  const [editMemberForm] = Form.useForm();
   const [editOrgForm] = Form.useForm();
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
 
@@ -147,6 +152,38 @@ export default function Organizations() {
     });
   };
 
+  const handleEditMember = (member: OrganizationMember) => {
+    setEditingMember(member);
+    editMemberForm.setFieldsValue({
+      position: member.position,
+      rank: member.rank,
+      loyalty: member.loyalty,
+      contribution: member.contribution,
+      status: member.status,
+      notes: member.notes,
+      joined_at: member.joined_at
+    });
+    setIsEditMemberModalOpen(true);
+  };
+
+  const handleUpdateMember = async (values: Record<string, unknown>) => {
+    if (!editingMember) return;
+
+    try {
+      await axios.put(`/api/organizations/members/${editingMember.id}`, values);
+      message.success('成员信息更新成功');
+      setIsEditMemberModalOpen(false);
+      editMemberForm.resetFields();
+      setEditingMember(null);
+      if (selectedOrg) {
+        loadMembers(selectedOrg.id);
+      }
+    } catch (error) {
+      message.error('更新失败');
+      console.error(error);
+    }
+  };
+
   const getStatusColor = (status: string) => {
     const colors: Record<string, string> = {
       active: 'green',
@@ -226,15 +263,14 @@ export default function Organizations() {
       key: 'action',
       render: (_: unknown, record: OrganizationMember) => (
         <Space>
-          {!isMobile && (
-            <Button
-              type="link"
-              size="small"
-              icon={<EditOutlined />}
-            >
-              编辑
-            </Button>
-          )}
+          <Button
+            type="link"
+            size="small"
+            icon={<EditOutlined />}
+            onClick={() => handleEditMember(record)}
+          >
+            {isMobile ? '' : '编辑'}
+          </Button>
           <Button
             type="link"
             danger
@@ -477,6 +513,108 @@ export default function Organizations() {
               <Button onClick={() => setIsAddMemberModalOpen(false)}>取消</Button>
               <Button type="primary" htmlType="submit">
                 添加
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* 编辑成员模态框 */}
+      <Modal
+        title="编辑成员信息"
+        open={isEditMemberModalOpen}
+        onCancel={() => {
+          setIsEditMemberModalOpen(false);
+          editMemberForm.resetFields();
+          setEditingMember(null);
+        }}
+        footer={null}
+        centered={true}
+        width={isMobile ? '90%' : 500}
+        style={isMobile ? {
+          maxWidth: '90vw',
+          margin: '0 auto'
+        } : undefined}
+        styles={isMobile ? {
+          body: {
+            maxHeight: 'calc(80vh - 110px)',
+            overflowY: 'auto',
+            padding: '20px 16px'
+          }
+        } : undefined}
+      >
+        <Form
+          form={editMemberForm}
+          layout="vertical"
+          onFinish={handleUpdateMember}
+        >
+          <Form.Item
+            name="position"
+            label="职位"
+            rules={[{ required: true, message: '请输入职位' }]}
+          >
+            <Input placeholder="如：掌门、长老、弟子" />
+          </Form.Item>
+
+          <Form.Item
+            name="rank"
+            label="职位等级"
+            tooltip="数字越大等级越高"
+          >
+            <InputNumber min={0} max={10} style={{ width: '100%' }} />
+          </Form.Item>
+
+          <Form.Item
+            name="loyalty"
+            label="忠诚度"
+          >
+            <InputNumber min={0} max={100} style={{ width: '100%' }} addonAfter="%" />
+          </Form.Item>
+
+          <Form.Item
+            name="contribution"
+            label="贡献度"
+          >
+            <InputNumber min={0} max={100} style={{ width: '100%' }} addonAfter="%" />
+          </Form.Item>
+
+          <Form.Item
+            name="status"
+            label="状态"
+          >
+            <Select>
+              <Select.Option value="active">在职</Select.Option>
+              <Select.Option value="retired">退休</Select.Option>
+              <Select.Option value="expelled">除名</Select.Option>
+              <Select.Option value="deceased">已故</Select.Option>
+            </Select>
+          </Form.Item>
+
+          <Form.Item
+            name="joined_at"
+            label="加入时间"
+          >
+            <Input placeholder="如：开山大典时、三年前、建立之初等" />
+          </Form.Item>
+
+          <Form.Item
+            name="notes"
+            label="备注"
+          >
+            <Input.TextArea rows={3} placeholder="成员相关的备注信息" />
+          </Form.Item>
+
+          <Form.Item>
+            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+              <Button onClick={() => {
+                setIsEditMemberModalOpen(false);
+                editMemberForm.resetFields();
+                setEditingMember(null);
+              }}>
+                取消
+              </Button>
+              <Button type="primary" htmlType="submit">
+                保存
               </Button>
             </Space>
           </Form.Item>
