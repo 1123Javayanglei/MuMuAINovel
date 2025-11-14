@@ -1,11 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { Card, Table, Tag, Button, Space, message, Modal, Form, Select, InputNumber, Input, Descriptions } from 'antd';
-import { PlusOutlined, TeamOutlined, UserOutlined, EditOutlined, DeleteOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { PlusOutlined, TeamOutlined, UserOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import axios from 'axios';
-
-const { TextArea } = Input;
 
 interface Organization {
   id: string;
@@ -48,10 +46,8 @@ export default function Organizations() {
   const [loading, setLoading] = useState(false);
   const [isAddMemberModalOpen, setIsAddMemberModalOpen] = useState(false);
   const [isEditOrgModalOpen, setIsEditOrgModalOpen] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
   const [form] = Form.useForm();
   const [editOrgForm] = Form.useForm();
-  const [generateForm] = Form.useForm();
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
 
   useEffect(() => {
@@ -148,68 +144,6 @@ export default function Organizations() {
           console.error(error);
         }
       }
-    });
-  };
-
-  const handleGenerateOrganization = async (values: {
-    name?: string;
-    organization_type?: string;
-    background?: string;
-    requirements?: string;
-  }) => {
-    try {
-      setIsGenerating(true);
-      await axios.post('/api/organizations/generate', {
-        project_id: projectId,
-        name: values.name,
-        organization_type: values.organization_type,
-        background: values.background,
-        requirements: values.requirements,
-      });
-      message.success('AI生成组织成功');
-      Modal.destroyAll();
-      generateForm.resetFields();
-      loadOrganizations();
-    } catch (error: any) {
-      message.error(error.response?.data?.detail || 'AI生成失败');
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  const showGenerateModal = () => {
-    Modal.confirm({
-      title: 'AI生成组织',
-      width: 600,
-      centered: !isMobile,
-      content: (
-        <Form form={generateForm} layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item
-            label="组织名称"
-            name="name"
-          >
-            <Input placeholder="如：天剑门、黑龙会（可选，AI会自动生成）" />
-          </Form.Item>
-          <Form.Item
-            label="组织类型"
-            name="organization_type"
-          >
-            <Input placeholder="如：门派、帮派、公司、学院（可选，AI会根据世界观生成）" />
-          </Form.Item>
-          <Form.Item label="背景设定" name="background">
-            <TextArea rows={3} placeholder="简要描述组织的背景和环境..." />
-          </Form.Item>
-          <Form.Item label="其他要求" name="requirements">
-            <TextArea rows={2} placeholder="其他特殊要求..." />
-          </Form.Item>
-        </Form>
-      ),
-      okText: '生成',
-      cancelText: '取消',
-      onOk: async () => {
-        const values = await generateForm.validateFields();
-        await handleGenerateOrganization(values);
-      },
     });
   };
 
@@ -331,17 +265,6 @@ export default function Organizations() {
             <span style={{ fontSize: isMobile ? 14 : 16 }}>组织管理</span>
             {!isMobile && <Tag color="blue">{currentProject?.title}</Tag>}
           </Space>
-        }
-        extra={
-          <Button
-            type="dashed"
-            icon={<ThunderboltOutlined />}
-            onClick={showGenerateModal}
-            loading={isGenerating}
-            size={isMobile ? 'small' : 'middle'}
-          >
-            AI生成组织
-          </Button>
         }
       >
         <div style={{
