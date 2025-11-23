@@ -15,40 +15,25 @@ export default function AppFooter() {
   useEffect(() => {
     // 检查版本更新（每次都重新检查）
     const checkVersion = async () => {
-      console.log('[页脚组件] 开始版本检查流程...');
-      console.log('[页脚组件] 开始从 GitHub 检查版本...');
-      
       try {
         const result = await checkLatestVersion();
-        console.log('[页脚组件] 版本检查结果:', result);
-        console.log('[页脚组件] 是否显示红点:', result.hasUpdate);
-        
         setHasUpdate(result.hasUpdate);
         setLatestVersion(result.latestVersion);
         setReleaseUrl(result.releaseUrl);
       } catch (error) {
-        console.error('[页脚组件] 版本检查失败:', error);
+        // 静默失败
       }
     };
 
     // 延迟3秒后检查，避免影响首次加载
-    console.log('[页脚组件] 将在3秒后开始版本检查');
     const timer = setTimeout(checkVersion, 3000);
-    return () => {
-      console.log('[页脚组件] 清理定时器');
-      clearTimeout(timer);
-    };
+    return () => clearTimeout(timer);
   }, []);
 
   // 点击版本号查看更新
   const handleVersionClick = () => {
-    console.log('[页脚组件] 版本号被点击, hasUpdate:', hasUpdate, 'releaseUrl:', releaseUrl);
-    
     if (hasUpdate && releaseUrl) {
-      console.log('[页脚组件] 打开发布页面:', releaseUrl);
       window.open(releaseUrl, '_blank');
-    } else {
-      console.log('[页脚组件] 无更新或无发布链接，不执行跳转');
     }
   };
 

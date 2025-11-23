@@ -30,20 +30,14 @@ function compareVersion(v1: string, v2: string): number {
  * 优点：无 CORS 问题，自动从 GitHub 获取，无需维护
  */
 export async function checkLatestVersion(): Promise<VersionCheckResult> {
-  console.log('[版本检查] 开始检查版本更新...');
-  console.log('[版本检查] 当前版本:', VERSION_INFO.version);
-  
   try {
     // 使用 shields.io 的 GitHub release badge API
     const badgeUrl = 'https://img.shields.io/github/v/release/xiamuceer-j/MuMuAINovel';
-    console.log('[版本检查] 请求 Badge API:', badgeUrl);
     
     const response = await fetch(badgeUrl, {
       method: 'GET',
       cache: 'no-cache',
     });
-    
-    console.log('[版本检查] 响应状态:', response.status, response.statusText);
     
     if (!response.ok) {
       throw new Error(`HTTP ${response.status} ${response.statusText}`);
@@ -51,51 +45,31 @@ export async function checkLatestVersion(): Promise<VersionCheckResult> {
     
     // shields.io 返回的是 SVG 格式
     const svgText = await response.text();
-    console.log('[版本检查] 获取 SVG 成功，长度:', svgText.length);
     
     // 从 SVG 中提取版本号
     // SVG 中版本号通常在 <text> 标签内，格式如: v1.0.0 或 1.0.0
     const versionRegex = /v?([\d.]+)/g;
     const matches = svgText.match(versionRegex);
     
-    console.log('[版本检查] 正则匹配结果:', matches);
-    
     if (matches && matches.length > 0) {
       // 通常最后一个匹配是版本号（前面的可能是标签文本）
       const versionMatch = matches[matches.length - 1];
       const latestVersion = versionMatch.replace('v', '');
       
-      console.log('[版本检查] 提取的版本号:', latestVersion);
-      
       // 验证版本号格式 (x.x.x)
       if (/^\d+\.\d+(\.\d+)?$/.test(latestVersion)) {
         const hasUpdate = compareVersion(VERSION_INFO.version, latestVersion) < 0;
         
-        console.log('[版本检查] 最新版本:', latestVersion);
-        console.log('[版本检查] 版本比较: 当前', VERSION_INFO.version, 'vs 最新', latestVersion);
-        console.log('[版本检查] 是否有更新:', hasUpdate);
-        
-        const result = {
+        return {
           hasUpdate,
           latestVersion,
           releaseUrl: `https://github.com/xiamuceer-j/MuMuAINovel/releases/tag/v${latestVersion}`,
         };
-        
-        console.log('[版本检查] 检查完成，结果:', result);
-        return result;
-      } else {
-        console.warn('[版本检查] 版本号格式不正确:', latestVersion);
       }
     }
     
-    // 打印 SVG 内容用于调试
-    console.log('[版本检查] SVG 内容片段:', svgText.substring(0, 500));
-    
     throw new Error('无法从 Badge API 解析版本信息');
   } catch (error) {
-    console.error('[版本检查] 检查失败:', error);
-    console.error('[版本检查] 错误详情:', error instanceof Error ? error.message : String(error));
-    
     // 失败时返回无更新
     return {
       hasUpdate: false,
@@ -155,7 +129,6 @@ export function cacheVersionInfo(info: VersionCheckResult): void {
  * 用户已查看更新提示
  */
 export function markUpdateViewed(version: string): void {
-  console.log('[版本检查] 标记版本已查看:', version);
   localStorage.setItem('version_viewed', version);
 }
 
@@ -164,7 +137,6 @@ export function markUpdateViewed(version: string): void {
  */
 export function hasViewedUpdate(version: string): boolean {
   const viewedVersion = localStorage.getItem('version_viewed');
-  console.log('[版本检查] 检查是否已查看, 最新版本:', version, ', 已查看版本:', viewedVersion);
   
   // 如果已查看的版本低于最新版本，应该显示红点
   if (viewedVersion && version) {
@@ -176,17 +148,13 @@ export function hasViewedUpdate(version: string): boolean {
       const num2 = parts2[i] || 0;
       
       if (num1 < num2) {
-        console.log('[版本检查] 已查看版本低于最新版本，应显示红点');
         return false; // 已查看的版本低于最新版本，需要显示红点
       }
       if (num1 > num2) {
-        console.log('[版本检查] 已查看版本高于最新版本，不显示红点');
         return true; // 已查看的版本高于最新版本
       }
     }
   }
   
-  const result = viewedVersion === version;
-  console.log('[版本检查] 版本比较结果:', result);
-  return result;
+  return viewedVersion === version;
 }
