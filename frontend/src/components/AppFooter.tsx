@@ -1,11 +1,56 @@
-import { Typography, Space, Divider } from 'antd';
+import { useState, useEffect } from 'react';
+import { Typography, Space, Divider, Badge, Tooltip } from 'antd';
 import { GithubOutlined, CopyrightOutlined, HeartFilled, ClockCircleOutlined } from '@ant-design/icons';
 import { VERSION_INFO, getVersionString } from '../config/version';
+import { checkLatestVersion } from '../services/versionService';
 
 const { Text, Link } = Typography;
 
 export default function AppFooter() {
   const isMobile = window.innerWidth <= 768;
+  const [hasUpdate, setHasUpdate] = useState(false);
+  const [latestVersion, setLatestVersion] = useState('');
+  const [releaseUrl, setReleaseUrl] = useState('');
+
+  useEffect(() => {
+    // 检查版本更新（每次都重新检查）
+    const checkVersion = async () => {
+      console.log('[页脚组件] 开始版本检查流程...');
+      console.log('[页脚组件] 开始从 GitHub 检查版本...');
+      
+      try {
+        const result = await checkLatestVersion();
+        console.log('[页脚组件] 版本检查结果:', result);
+        console.log('[页脚组件] 是否显示红点:', result.hasUpdate);
+        
+        setHasUpdate(result.hasUpdate);
+        setLatestVersion(result.latestVersion);
+        setReleaseUrl(result.releaseUrl);
+      } catch (error) {
+        console.error('[页脚组件] 版本检查失败:', error);
+      }
+    };
+
+    // 延迟3秒后检查，避免影响首次加载
+    console.log('[页脚组件] 将在3秒后开始版本检查');
+    const timer = setTimeout(checkVersion, 3000);
+    return () => {
+      console.log('[页脚组件] 清理定时器');
+      clearTimeout(timer);
+    };
+  }, []);
+
+  // 点击版本号查看更新
+  const handleVersionClick = () => {
+    console.log('[页脚组件] 版本号被点击, hasUpdate:', hasUpdate, 'releaseUrl:', releaseUrl);
+    
+    if (hasUpdate && releaseUrl) {
+      console.log('[页脚组件] 打开发布页面:', releaseUrl);
+      window.open(releaseUrl, '_blank');
+    } else {
+      console.log('[页脚组件] 无更新或无发布链接，不执行跳转');
+    }
+  };
 
   return (
     <div
@@ -38,19 +83,25 @@ export default function AppFooter() {
             gap: 8,
             flexWrap: 'wrap'
           }}>
-            <Text
-              style={{
-                fontSize: 11,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 4,
-                color: '#fff',
-                textShadow: '0 1px 3px rgba(0, 0, 0, 0.3)',
-              }}
-            >
-              <strong style={{ color: '#fff' }}>{VERSION_INFO.projectName}</strong>
-              <span>{getVersionString()}</span>
-            </Text>
+            <Badge dot={hasUpdate} offset={[-8, 2]}>
+              <Tooltip title={hasUpdate ? `发现新版本 v${latestVersion}，点击查看` : '当前版本'}>
+                <Text
+                  onClick={handleVersionClick}
+                  style={{
+                    fontSize: 11,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    color: '#fff',
+                    textShadow: '0 1px 3px rgba(0, 0, 0, 0.3)',
+                    cursor: hasUpdate ? 'pointer' : 'default',
+                  }}
+                >
+                  <strong style={{ color: '#fff' }}>{VERSION_INFO.projectName}</strong>
+                  <span>{getVersionString()}</span>
+                </Text>
+              </Tooltip>
+            </Badge>
             <Divider type="vertical" style={{ margin: '0 4px', borderColor: 'rgba(255, 255, 255, 0.3)' }} />
             <Link
               href={VERSION_INFO.githubUrl}
@@ -91,19 +142,36 @@ export default function AppFooter() {
             }}
           >
             {/* 版本信息 */}
-            <Text
-              style={{
-                fontSize: 12,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                color: '#fff',
-                textShadow: '0 1px 3px rgba(0, 0, 0, 0.3)',
-              }}
-            >
-              <strong style={{ color: '#fff' }}>{VERSION_INFO.projectName}</strong>
-              <span>{getVersionString()}</span>
-            </Text>
+            <Badge dot={hasUpdate} offset={[-8, 2]}>
+              <Tooltip title={hasUpdate ? `发现新版本 v${latestVersion}，点击查看` : '当前版本'}>
+                <Text
+                  onClick={handleVersionClick}
+                  style={{
+                    fontSize: 12,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    color: '#fff',
+                    textShadow: '0 1px 3px rgba(0, 0, 0, 0.3)',
+                    cursor: hasUpdate ? 'pointer' : 'default',
+                    transition: 'all 0.3s',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (hasUpdate) {
+                      e.currentTarget.style.transform = 'scale(1.05)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (hasUpdate) {
+                      e.currentTarget.style.transform = 'scale(1)';
+                    }
+                  }}
+                >
+                  <strong style={{ color: '#fff' }}>{VERSION_INFO.projectName}</strong>
+                  <span>{getVersionString()}</span>
+                </Text>
+              </Tooltip>
+            </Badge>
 
             {/* GitHub 链接 */}
             <Link

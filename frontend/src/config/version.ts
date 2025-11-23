@@ -1,11 +1,13 @@
 /**
  * 应用版本信息配置
  * 版本号遵循语义化版本规范 (Semantic Versioning)
+ *
+ * 注意：版本号从 package.json 自动读取，无需手动维护
  */
 
 export const VERSION_INFO = {
-  // 应用版本号
-  version: '1.0.1',
+  // 应用版本号（从 package.json 读取，构建时注入）
+  version: import.meta.env.VITE_APP_VERSION || '1.0.0',
   
   // 构建时间（将在构建时由 Vite 注入）
   buildTime: import.meta.env.VITE_BUILD_TIME || new Date().toISOString().split('T')[0],
