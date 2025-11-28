@@ -2543,7 +2543,7 @@ async def regenerate_chapter_stream(
         if not analysis:
             raise HTTPException(status_code=404, detail="该章节暂无分析结果")
     
-    # 预先获取项目上下文数据
+    # 预先获取项目上下文数据和写作风格
     async for temp_db in get_db(request):
         try:
             # 获取项目信息
@@ -2565,6 +2565,41 @@ async def regenerate_chapter_stream(
                 .where(Outline.order_index == chapter.chapter_number)
             )
             outline = outline_result.scalar_one_or_none()
+            
+            # 获取写作风格
+            style_content = ""
+            style_id = regenerate_request.style_id
+            
+            # 如果没有指定风格，尝试使用项目的默认风格
+            if not style_id:
+                from app.models.project_default_style import ProjectDefaultStyle
+                default_style_result = await temp_db.execute(
+                    select(ProjectDefaultStyle.style_id)
+                    .where(ProjectDefaultStyle.project_id == chapter.project_id)
+                )
+                default_style_id = default_style_result.scalar_one_or_none()
+                if default_style_id:
+                    style_id = default_style_id
+                    logger.info(f"📝 使用项目默认写作风格: {style_id}")
+            
+            # 获取风格内容
+            if style_id:
+                style_result = await temp_db.execute(
+                    select(WritingStyle).where(WritingStyle.id == style_id)
+                )
+                style = style_result.scalar_one_or_none()
+                if style:
+                    # 验证风格是否可用：全局预设风格（project_id为NULL）或者当前项目的自定义风格
+                    if style.project_id is None or style.project_id == chapter.project_id:
+                        style_content = style.prompt_content or ""
+                        style_type = "全局预设" if style.project_id is None else "项目自定义"
+                        logger.info(f"✅ 使用写作风格: {style.name} ({style_type})")
+                    else:
+                        logger.warning(f"⚠️ 风格 {style_id} 不属于当前项目，跳过")
+                else:
+                    logger.warning(f"⚠️ 未找到风格 {style_id}")
+            else:
+                logger.info("ℹ️ 未指定写作风格，使用默认提示词")
             
             # 构建项目上下文
             project_context = {
@@ -2635,7 +2670,8 @@ async def regenerate_chapter_stream(
                     chapter=chapter,
                     analysis=analysis,
                     regenerate_request=regenerate_request,
-                    project_context=project_context
+                    project_context=project_context,
+                    style_content=style_content
                 ):
                     # 处理不同类型的事件
                     if event['type'] == 'chunk':
