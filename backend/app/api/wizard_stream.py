@@ -1168,7 +1168,8 @@ async def world_building_regenerate_generator(
             template,
             title=project.title,
             theme=project.theme or "未设定",
-            genre=project.genre or "通用"
+            genre=project.genre or "通用",
+            description=project.description or "暂无简介"
         )
         
         # MCP工具增强：收集参考资料
