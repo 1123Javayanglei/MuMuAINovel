@@ -2018,11 +2018,38 @@ class PromptService:
         }
 
     @classmethod
-    def get_mcp_tool_test_prompts(cls, plugin_name: str) -> Dict[str, str]:
-        """获取MCP工具测试的提示词"""
+    async def get_mcp_tool_test_prompts(
+        cls,
+        plugin_name: str,
+        user_id: str = None,
+        db = None
+    ) -> Dict[str, str]:
+        """
+        获取MCP工具测试的提示词（支持自定义）
+        
+        Args:
+            plugin_name: 插件名称
+            user_id: 用户ID（可选）
+            db: 数据库会话（可选）
+            
+        Returns:
+            包含user和system提示词的字典
+        """
+        # 获取用户自定义或系统默认的user提示词
+        if user_id and db:
+            user_template = await cls.get_template("MCP_TOOL_TEST", user_id, db)
+        else:
+            user_template = cls.MCP_TOOL_TEST
+        
+        # 获取用户自定义或系统默认的system提示词
+        if user_id and db:
+            system_template = await cls.get_template("MCP_TOOL_TEST_SYSTEM", user_id, db)
+        else:
+            system_template = cls.MCP_TOOL_TEST_SYSTEM
+        
         return {
-            "user": cls.format_prompt(cls.MCP_TOOL_TEST, plugin_name=plugin_name),
-            "system": cls.MCP_TOOL_TEST_SYSTEM
+            "user": cls.format_prompt(user_template, plugin_name=plugin_name),
+            "system": system_template
         }
 # 创建全局提示词服务实例
 
@@ -2233,10 +2260,16 @@ class PromptService:
                              "end_index", "target_chapter_count", "scene_instruction", "scene_field"]
             },
             "MCP_TOOL_TEST": {
-                "name": "MCP工具测试",
+                "name": "MCP工具测试(用户提示词)",
                 "category": "MCP测试",
-                "description": "用于测试MCP插件功能",
+                "description": "用于测试MCP插件功能的用户提示词",
                 "parameters": ["plugin_name"]
+            },
+            "MCP_TOOL_TEST_SYSTEM": {
+                "name": "MCP工具测试(系统提示词)",
+                "category": "MCP测试",
+                "description": "用于测试MCP插件功能的系统提示词",
+                "parameters": []
             },
             "MCP_WORLD_BUILDING_PLANNING": {
                 "name": "MCP世界观规划",
