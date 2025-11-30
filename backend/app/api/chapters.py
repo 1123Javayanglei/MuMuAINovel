@@ -2709,7 +2709,9 @@ async def regenerate_chapter_stream(
                     analysis=analysis,
                     regenerate_request=regenerate_request,
                     project_context=project_context,
-                    style_content=style_content
+                    style_content=style_content,
+                    user_id=user_id,
+                    db=db_session
                 ):
                     # 处理不同类型的事件
                     if event['type'] == 'chunk':

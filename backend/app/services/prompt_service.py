@@ -1901,11 +1901,35 @@ class PromptService:
         )
 
     @classmethod
-    def get_chapter_regeneration_prompt(cls, chapter_number: int, title: str, word_count: int, content: str,
+    async def get_chapter_regeneration_prompt(cls, chapter_number: int, title: str, word_count: int, content: str,
                                         modification_instructions: str, project_context: Dict[str, Any],
-                                        style_content: str, target_word_count: int) -> str:
-        """获取章节重写提示词"""
-        prompt_parts = [cls.CHAPTER_REGENERATION_SYSTEM]
+                                        style_content: str, target_word_count: int,
+                                        user_id: str = None, db = None) -> str:
+        """
+        获取章节重写提示词（支持用户自定义）
+        
+        Args:
+            chapter_number: 章节序号
+            title: 章节标题
+            word_count: 原始字数
+            content: 原始内容
+            modification_instructions: 修改指令
+            project_context: 项目上下文
+            style_content: 写作风格
+            target_word_count: 目标字数
+            user_id: 用户ID（可选，用于获取自定义模板）
+            db: 数据库会话（可选，用于查询自定义模板）
+            
+        Returns:
+            完整的章节重写提示词
+        """
+        # 获取系统提示词模板（支持用户自定义）
+        if user_id and db:
+            system_template = await cls.get_template("CHAPTER_REGENERATION_SYSTEM", user_id, db)
+        else:
+            system_template = cls.CHAPTER_REGENERATION_SYSTEM
+        
+        prompt_parts = [system_template]
         
         # 原始章节信息
         prompt_parts.append(f"""## 📖 原始章节信息
