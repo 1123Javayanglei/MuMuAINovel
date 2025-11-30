@@ -64,7 +64,8 @@ async def world_building_generator(
             template,
             title=title,
             theme=theme,
-            genre=genre or "通用类型"
+            genre=genre or "通用类型",
+            description=description or "暂无简介"
         )
         
         # MCP工具增强：收集参考资料
