@@ -23,7 +23,6 @@ import Login from './pages/Login';
 import AuthCallback from './pages/AuthCallback';
 import ProtectedRoute from './components/ProtectedRoute';
 import AppFooter from './components/AppFooter';
-import ChangelogFloatingButton from './components/ChangelogFloatingButton';
 import './App.css';
 
 function App() {
@@ -61,7 +60,6 @@ function App() {
             {/* <Route path="polish" element={<Polish />} /> */}
           </Route>
         </Routes>
-        <ChangelogFloatingButton />
       </BrowserRouter>
     </ConfigProvider>
   );
