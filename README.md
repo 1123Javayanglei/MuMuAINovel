@@ -147,7 +147,13 @@ docker-compose up -d
 # 1. 拉取最新镜像（已包含模型文件）
 docker pull mumujie/mumuainovel:latest
 
-# 2. 配置 docker-compose.yml
+# 2. 创建 docker-compose.yml（点击下方展开查看完整配置）
+```
+
+<details>
+<summary>📄 点击展开 docker-compose.yml 完整配置</summary>
+
+```yaml
 services:
   postgres:
     image: postgres:18-alpine
@@ -200,9 +206,6 @@ services:
       - max_wal_size=${POSTGRES_MAX_WAL_SIZE:-4GB}
 
   mumuainovel:
-    build:
-      context: .
-      dockerfile: Dockerfile
     image: mumujie/mumuainovel:latest
     container_name: mumuainovel
     depends_on:
@@ -220,15 +223,11 @@ services:
       - APP_HOST=${APP_HOST:-0.0.0.0}
       - APP_PORT=8000
       - DEBUG=${DEBUG:-false}
-      
       # 数据库配置
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-mumuai}:${POSTGRES_PASSWORD:-123456}@postgres:5432/${POSTGRES_DB:-mumuai_novel}
-      
-      # 数据库连接信息（用于 entrypoint.sh）
       - DB_HOST=postgres
       - DB_PORT=5432
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-123456}
-      
       # PostgreSQL 连接池配置
       - DATABASE_POOL_SIZE=${DATABASE_POOL_SIZE:-30}
       - DATABASE_MAX_OVERFLOW=${DATABASE_MAX_OVERFLOW:-20}
@@ -236,12 +235,10 @@ services:
       - DATABASE_POOL_RECYCLE=${DATABASE_POOL_RECYCLE:-1800}
       - DATABASE_POOL_PRE_PING=${DATABASE_POOL_PRE_PING:-True}
       - DATABASE_POOL_USE_LIFO=${DATABASE_POOL_USE_LIFO:-True}
-      
       # 代理配置（可选）
       - HTTP_PROXY=${HTTP_PROXY:-}
       - HTTPS_PROXY=${HTTPS_PROXY:-}
       - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1}
-      
       # AI 服务配置
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
@@ -253,19 +250,16 @@ services:
       - DEFAULT_MODEL=${DEFAULT_MODEL:-gpt-4o-mini}
       - DEFAULT_TEMPERATURE=${DEFAULT_TEMPERATURE:-0.7}
       - DEFAULT_MAX_TOKENS=${DEFAULT_MAX_TOKENS:-32000}
-      
       # LinuxDO OAuth 配置
       - LINUXDO_CLIENT_ID=${LINUXDO_CLIENT_ID:-11111}
       - LINUXDO_CLIENT_SECRET=${LINUXDO_CLIENT_SECRET:-11111}
       - LINUXDO_REDIRECT_URI=${LINUXDO_REDIRECT_URI:-http://localhost:8000/api/auth/linuxdo/callback}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8000}
-      
       # 本地账户登录配置
       - LOCAL_AUTH_ENABLED=${LOCAL_AUTH_ENABLED:-true}
       - LOCAL_AUTH_USERNAME=${LOCAL_AUTH_USERNAME:-admin}
       - LOCAL_AUTH_PASSWORD=${LOCAL_AUTH_PASSWORD:-admin123}
       - LOCAL_AUTH_DISPLAY_NAME=${LOCAL_AUTH_DISPLAY_NAME:-本地管理员}
-      
       # 会话配置
       - SESSION_EXPIRE_MINUTES=${SESSION_EXPIRE_MINUTES:-120}
       - SESSION_REFRESH_THRESHOLD_MINUTES=${SESSION_REFRESH_THRESHOLD_MINUTES:-30}
@@ -286,7 +280,11 @@ volumes:
 networks:
   ai-story-network:
     driver: bridge
+```
 
+</details>
+
+```bash
 # 3. 启动服务
 docker-compose up -d
 
