@@ -19,10 +19,11 @@ anthropic==0.72.0
 
 # 工具库
 httpx==0.28.1
-python-dotenv==1.0.0
+python-dotenv==1.1.0
 psutil==6.1.1
 # MCP官方库（Model Context Protocol Python SDK）
-mcp==1.21.0
+mcp==1.22.0
+fastmcp==2.13.3
 
 
 # NumPy版本锁定（兼容性要求）
