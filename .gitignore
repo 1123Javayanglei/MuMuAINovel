@@ -102,8 +102,18 @@ dmypy.json
 # Jupyter Notebook
 .ipynb_checkpoints
 
+#build
+BUILD_GUIDE.md
+launcher.py
+launcher.spec
+mumuainovel.md
+logo.ico
+
+
 data/
 docs/
 data_old/
 backend/migrate_all_databases.py
 test_api.py
+# Embedding models (downloaded from HuggingFace at runtime)
+backend/embedding/
