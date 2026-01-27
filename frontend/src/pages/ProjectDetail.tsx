@@ -17,6 +17,7 @@ import {
   HeartOutlined,
   TrophyOutlined,
   BulbOutlined,
+  CloudOutlined,
 } from '@ant-design/icons';
 import { useStore } from '../store';
 import { useCharacterSync, useOutlineSync, useChapterSync } from '../store/hooks';
@@ -151,6 +152,11 @@ export default function ProjectDetail() {
       icon: <EditOutlined />,
       label: <Link to={`/project/${projectId}/writing-styles`}>写作风格</Link>,
     },
+    {
+      key: 'prompt-workshop',
+      icon: <CloudOutlined />,
+      label: <Link to={`/project/${projectId}/prompt-workshop`}>提示词工坊</Link>,
+    },
     // {
     //   key: 'polish',
     //   icon: <ToolOutlined />,
@@ -171,6 +177,7 @@ export default function ProjectDetail() {
     if (path.includes('/foreshadows')) return 'foreshadows';
     if (path.includes('/chapters')) return 'chapters';
     if (path.includes('/writing-styles')) return 'writing-styles';
+    if (path.includes('/prompt-workshop')) return 'prompt-workshop';
     if (path.includes('/sponsor')) return 'sponsor';
     // if (path.includes('/polish')) return 'polish';
     return 'sponsor'; // 默认选中赞助支持

@@ -16,6 +16,7 @@ import ChapterReader from './pages/ChapterReader';
 import ChapterAnalysis from './pages/ChapterAnalysis';
 import Foreshadows from './pages/Foreshadows';
 import WritingStyles from './pages/WritingStyles';
+import PromptWorkshop from './pages/PromptWorkshop';
 import Settings from './pages/Settings';
 import MCPPlugins from './pages/MCPPlugins';
 import UserManagement from './pages/UserManagement';
@@ -62,6 +63,7 @@ function App() {
             <Route path="chapter-analysis" element={<ChapterAnalysis />} />
             <Route path="foreshadows" element={<Foreshadows />} />
             <Route path="writing-styles" element={<WritingStyles />} />
+            <Route path="prompt-workshop" element={<PromptWorkshop />} />
             <Route path="sponsor" element={<Sponsor />} />
             {/* <Route path="polish" element={<Polish />} /> */}
           </Route>

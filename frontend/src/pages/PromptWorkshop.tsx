@@ -51,11 +51,7 @@ import { PROMPT_CATEGORIES } from '../types';
 const { TextArea } = Input;
 const { Text, Paragraph } = Typography;
 
-interface PromptWorkshopProps {
-  onImportSuccess?: () => void;
-}
-
-export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps) {
+export default function PromptWorkshop() {
   const [items, setItems] = useState<PromptWorkshopItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState(0);
@@ -120,10 +116,23 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
   const [editForm] = Form.useForm();
   const [editLoading, setEditLoading] = useState(false);
   
+  // 当前活动的 Tab
+  const [activeTab, setActiveTab] = useState<string>('browse');
+  
   const isMobile = window.innerWidth <= 768;
   
   // 判断是否为服务端管理员
   const isServerAdmin = serviceStatus?.mode === 'server' && currentUser?.is_admin;
+
+  // 卡片网格配置 - 与 WritingStyles 保持一致
+  const gridConfig = {
+    gutter: isMobile ? 8 : 16,
+    xs: 24,
+    sm: 24,
+    md: 12,
+    lg: 8,
+    xl: 6,
+  };
 
   // 加载服务状态和用户信息
   useEffect(() => {
@@ -186,7 +195,6 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
     try {
       await promptWorkshopApi.importItem(item.id);
       message.success(`已导入「${item.name}」到本地写作风格`);
-      onImportSuccess?.();
       // 刷新列表更新下载计数
       loadItems();
     } catch (error) {
@@ -296,19 +304,9 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
     return <Tag color={cfg.color} icon={cfg.icon}>{cfg.text}</Tag>;
   };
 
-  // 网格配置
-  const gridConfig = {
-    gutter: isMobile ? 8 : 16,
-    xs: 24,
-    sm: 12,
-    md: 8,
-    lg: 6,
-    xl: 6,
-  };
-
-  // 渲染工坊列表
-  const renderWorkshopList = () => (
-    <div>
+  // 渲染筛选区域（固定在顶部）
+  const renderFilterBar = () => (
+    <div style={{ marginBottom: 16 }}>
       {/* 服务状态 */}
       {serviceStatus && !serviceStatus.cloud_connected && serviceStatus.mode === 'client' && (
         <Alert
@@ -322,11 +320,10 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
       )}
       
       {/* 筛选区域 */}
-      <div style={{ 
-        display: 'flex', 
-        flexWrap: 'wrap', 
-        gap: 12, 
-        marginBottom: 16,
+      <div style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 12,
         alignItems: 'center',
       }}>
         <Input
@@ -358,21 +355,27 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
           <Select.Option value="popular">最受欢迎</Select.Option>
           <Select.Option value="downloads">下载最多</Select.Option>
         </Select>
-        <Button 
-          icon={<SyncOutlined />} 
+        <Button
+          icon={<SyncOutlined />}
           onClick={() => { setCurrentPage(1); loadItems(); }}
         >
           刷新
         </Button>
       </div>
+    </div>
+  );
 
-      {/* 列表区域 */}
-      <Spin spinning={loading}>
-        {items.length === 0 ? (
-          <Empty description="暂无提示词" />
-        ) : (
-          <>
-            <Row gutter={[gridConfig.gutter, gridConfig.gutter]}>
+  // 渲染工坊列表（只有卡片部分，用于滚动区域）
+  const renderWorkshopList = () => (
+    <Spin spinning={loading}>
+          {items.length === 0 ? (
+            <Empty description="暂无提示词" />
+          ) : (
+            <>
+              <Row
+                gutter={[0, gridConfig.gutter]}
+                style={{ marginLeft: 0, marginRight: 0 }}
+              >
               {items.map(item => (
                 <Col
                   key={item.id}
@@ -381,11 +384,27 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
                   md={gridConfig.md}
                   lg={gridConfig.lg}
                   xl={gridConfig.xl}
+                  style={{
+                    paddingLeft: 0,
+                    paddingRight: gridConfig.gutter / 2,
+                    marginBottom: gridConfig.gutter
+                  }}
                 >
                   <Card
                     hoverable
-                    style={{ height: '100%', borderRadius: 12 }}
-                    bodyStyle={{ padding: 16, display: 'flex', flexDirection: 'column', height: '100%' }}
+                    style={{ 
+                      height: '100%', 
+                      borderRadius: 12,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      border: '1px solid #f0f0f0',
+                    }}
+                    bodyStyle={{ 
+                      padding: 16, 
+                      display: 'flex', 
+                      flexDirection: 'column', 
+                      flex: 1,
+                    }}
                     actions={[
                       <Tooltip title="查看详情" key="view">
                         <EyeOutlined onClick={() => handleViewDetail(item)} />
@@ -413,9 +432,9 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
                       </Tooltip>,
                     ]}
                   >
-                    <div style={{ flex: 1 }}>
-                      <Space style={{ marginBottom: 8 }} wrap>
-                        <Text strong style={{ fontSize: 15 }}>{item.name}</Text>
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                      <Space style={{ marginBottom: 12 }} wrap>
+                        <Text strong style={{ fontSize: 16 }}>{item.name}</Text>
                         <Tag color={getCategoryColor(item.category)}>
                           {getCategoryName(item.category)}
                         </Tag>
@@ -424,28 +443,31 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
                       {item.description && (
                         <Paragraph
                           type="secondary"
-                          style={{ fontSize: 13, marginBottom: 8 }}
-                          ellipsis={{ rows: 2 }}
+                          style={{ fontSize: 13, marginBottom: 12 }}
+                          ellipsis={{ rows: 2, tooltip: item.description }}
                         >
                           {item.description}
                         </Paragraph>
                       )}
                       
                       <Paragraph
+                        type="secondary"
                         style={{
                           fontSize: 12,
+                          marginBottom: 0,
                           backgroundColor: '#fafafa',
                           padding: 8,
                           borderRadius: 4,
-                          marginBottom: 8,
+                          flex: 1,
+                          minHeight: 60,
                         }}
-                        ellipsis={{ rows: 3 }}
+                        ellipsis={{ rows: 3, tooltip: item.prompt_content }}
                       >
                         {item.prompt_content}
                       </Paragraph>
                       
                       {item.tags && item.tags.length > 0 && (
-                        <Space size={4} wrap>
+                        <Space size={4} wrap style={{ marginTop: 8 }}>
                           {item.tags.slice(0, 3).map(tag => (
                             <Tag key={tag} style={{ fontSize: 11 }}>{tag}</Tag>
                           ))}
@@ -464,24 +486,23 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
                   </Card>
                 </Col>
               ))}
-            </Row>
-            
-            {total > pageSize && (
-              <div style={{ marginTop: 24, textAlign: 'center' }}>
-                <Pagination
-                  current={currentPage}
-                  total={total}
-                  pageSize={pageSize}
-                  onChange={page => setCurrentPage(page)}
-                  showSizeChanger={false}
-                  showTotal={t => `共 ${t} 个提示词`}
-                />
-              </div>
-            )}
-          </>
-        )}
-      </Spin>
-    </div>
+              </Row>
+              
+              {total > pageSize && (
+                <div style={{ marginTop: 24, textAlign: 'center', paddingBottom: 16 }}>
+                  <Pagination
+                    current={currentPage}
+                    total={total}
+                    pageSize={pageSize}
+                    onChange={page => setCurrentPage(page)}
+                    showSizeChanger={false}
+                    showTotal={t => `共 ${t} 个提示词`}
+                  />
+                </div>
+              )}
+            </>
+          )}
+    </Spin>
   );
 
   // 渲染我的提交
@@ -495,14 +516,26 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
       </div>
       
       <Spin spinning={submissionsLoading}>
-        {mySubmissions.length === 0 ? (
-          <Empty description="暂无提交记录" />
-        ) : (
-          <Row gutter={[16, 16]}>
-            {mySubmissions.map(sub => (
-              <Col key={sub.id} xs={24} sm={12} md={8} lg={6}>
+          {mySubmissions.length === 0 ? (
+            <Empty description="暂无提交记录" />
+          ) : (
+            <Row gutter={[0, gridConfig.gutter]} style={{ marginLeft: 0, marginRight: 0 }}>
+              {mySubmissions.map(sub => (
+              <Col 
+                key={sub.id} 
+                xs={gridConfig.xs} 
+                sm={gridConfig.sm} 
+                md={gridConfig.md} 
+                lg={gridConfig.lg}
+                xl={gridConfig.xl}
+                style={{
+                  paddingLeft: 0,
+                  paddingRight: gridConfig.gutter / 2,
+                  marginBottom: gridConfig.gutter
+                }}
+              >
                 <Card
-                  style={{ borderRadius: 12 }}
+                  style={{ borderRadius: 12, height: '100%', border: '1px solid #f0f0f0' }}
                   bodyStyle={{ padding: 16 }}
                 >
                   <Space direction="vertical" style={{ width: '100%' }}>
@@ -551,8 +584,8 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
                 </Card>
               </Col>
             ))}
-          </Row>
-        )}
+            </Row>
+          )}
       </Spin>
     </div>
   );
@@ -754,11 +787,23 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
         {adminSubmissions.length === 0 ? (
           <Empty description="暂无待审核提交" />
         ) : (
-          <Row gutter={[16, 16]}>
+          <Row gutter={[0, gridConfig.gutter]} style={{ marginLeft: 0, marginRight: 0 }}>
             {adminSubmissions.map(sub => (
-              <Col key={sub.id} xs={24} sm={12} md={8} lg={6}>
+              <Col 
+                key={sub.id} 
+                xs={gridConfig.xs} 
+                sm={gridConfig.sm} 
+                md={gridConfig.md} 
+                lg={gridConfig.lg}
+                xl={gridConfig.xl}
+                style={{
+                  paddingLeft: 0,
+                  paddingRight: gridConfig.gutter / 2,
+                  marginBottom: gridConfig.gutter
+                }}
+              >
                 <Card
-                  style={{ borderRadius: 12 }}
+                  style={{ borderRadius: 12, border: '1px solid #f0f0f0' }}
                   bodyStyle={{ padding: 16 }}
                   actions={[
                     <Button
@@ -817,11 +862,23 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
         {publishedItems.length === 0 ? (
           <Empty description="暂无已发布提示词" />
         ) : (
-          <Row gutter={[16, 16]}>
+          <Row gutter={[0, gridConfig.gutter]} style={{ marginLeft: 0, marginRight: 0 }}>
             {publishedItems.map(item => (
-              <Col key={item.id} xs={24} sm={12} md={8} lg={6}>
+              <Col 
+                key={item.id} 
+                xs={gridConfig.xs} 
+                sm={gridConfig.sm} 
+                md={gridConfig.md} 
+                lg={gridConfig.lg}
+                xl={gridConfig.xl}
+                style={{
+                  paddingLeft: 0,
+                  paddingRight: gridConfig.gutter / 2,
+                  marginBottom: gridConfig.gutter
+                }}
+              >
                 <Card
-                  style={{ borderRadius: 12 }}
+                  style={{ borderRadius: 12, border: '1px solid #f0f0f0' }}
                   bodyStyle={{ padding: 16 }}
                   actions={[
                     <Tooltip title="编辑" key="edit">
@@ -875,68 +932,79 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
   );
 
   return (
-    <div>
-      {/* 标题和操作区 */}
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 16,
-        flexWrap: 'wrap',
-        gap: 12,
-      }}>
-        <Space>
-          <CloudOutlined style={{ fontSize: 20 }} />
-          <Text strong style={{ fontSize: 16 }}>提示词工坊</Text>
-          {serviceStatus?.mode === 'server' && (
-            <Badge status="success" text="服务端模式" />
-          )}
-        </Space>
-        <Button
-          type="primary"
-          icon={<CloudUploadOutlined />}
-          onClick={() => setIsSubmitModalOpen(true)}
-        >
-          分享我的提示词
-        </Button>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      {/* 固定区域：标题 + Tabs切换栏 + 筛选栏 */}
+      <div style={{ flexShrink: 0 }}>
+        {/* 标题和操作区 */}
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          padding: isMobile ? '12px 0' : '16px 0',
+          marginBottom: isMobile ? 12 : 16,
+          borderBottom: '1px solid #f0f0f0',
+          flexWrap: 'wrap',
+          gap: 12,
+        }}>
+          <h2 style={{ margin: 0, fontSize: isMobile ? 18 : 24, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <CloudOutlined />
+            提示词工坊
+            {serviceStatus?.mode === 'server' && (
+              <Badge status="success" text="服务端模式" style={{ marginLeft: 8, fontSize: 12 }} />
+            )}
+          </h2>
+          <Button
+            type="primary"
+            icon={<CloudUploadOutlined />}
+            onClick={() => setIsSubmitModalOpen(true)}
+          >
+            分享我的提示词
+          </Button>
+        </div>
+
+        {/* Tabs 切换栏（不含内容） */}
+        <Tabs
+          activeKey={activeTab}
+          onChange={key => {
+            setActiveTab(key);
+            if (key === 'submissions') loadMySubmissions();
+            if (key === 'admin') {
+              loadAdminSubmissions();
+              loadPublishedItems();
+            }
+          }}
+          items={[
+            { key: 'browse', label: '浏览工坊' },
+            {
+              key: 'submissions',
+              label: (
+                <Badge count={mySubmissions.filter(s => s.status === 'pending').length} size="small">
+                  我的提交
+                </Badge>
+              ),
+            },
+            ...(isServerAdmin ? [{
+              key: 'admin',
+              label: (
+                <Badge count={adminPendingCount} size="small">
+                  <span><SettingOutlined /> 管理审核</span>
+                </Badge>
+              ),
+            }] : []),
+          ]}
+          tabBarStyle={{ marginBottom: 16 }}
+        />
+
+        {/* 筛选栏（仅在浏览工坊时显示） */}
+        {activeTab === 'browse' && renderFilterBar()}
       </div>
 
-      {/* 标签页 */}
-      <Tabs
-        defaultActiveKey="browse"
-        onChange={key => {
-          if (key === 'submissions') loadMySubmissions();
-          if (key === 'admin') {
-            loadAdminSubmissions();
-            loadPublishedItems();
-          }
-        }}
-        items={[
-          {
-            key: 'browse',
-            label: '浏览工坊',
-            children: renderWorkshopList(),
-          },
-          {
-            key: 'submissions',
-            label: (
-              <Badge count={mySubmissions.filter(s => s.status === 'pending').length} size="small">
-                我的提交
-              </Badge>
-            ),
-            children: renderMySubmissions(),
-          },
-          ...(isServerAdmin ? [{
-            key: 'admin',
-            label: (
-              <Badge count={adminPendingCount} size="small">
-                <span><SettingOutlined /> 管理审核</span>
-              </Badge>
-            ),
-            children: renderAdminPanel(),
-          }] : []),
-        ]}
-      />
+      {/* 滚动区域：只有卡片列表滚动 */}
+      <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+        {activeTab === 'browse' && renderWorkshopList()}
+        {activeTab === 'submissions' && renderMySubmissions()}
+        {activeTab === 'admin' && renderAdminPanel()}
+      </div>
 
       {/* 提交弹窗 */}
       <Modal
