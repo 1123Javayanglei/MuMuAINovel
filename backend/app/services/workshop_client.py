@@ -135,7 +135,8 @@ class WorkshopClient:
             "submitter_name": submitter_name,
             **data
         }
-        return await self._request("POST", "/submit", json=payload)
+        # 注意：必须传递 user_identifier 以设置 X-User-ID Header
+        return await self._request("POST", "/submit", json=payload, user_identifier=user_identifier)
     
     async def get_submissions(
         self,

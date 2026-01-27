@@ -698,6 +698,53 @@ export const promptWorkshopApi = {
   // 撤回提交
   withdrawSubmission: (submissionId: string) =>
     api.delete<unknown, { success: boolean; message: string }>(`/prompt-workshop/submissions/${submissionId}`),
+
+  // ========== 管理员 API（仅服务端模式可用） ==========
+  
+  // 获取待审核列表
+  adminGetSubmissions: (params?: { status?: string; source?: string; page?: number; limit?: number }) =>
+    api.get<unknown, {
+      success: boolean;
+      data: {
+        total: number;
+        pending_count: number;
+        page: number;
+        limit: number;
+        items: PromptSubmission[];
+      };
+    }>('/prompt-workshop/admin/submissions', { params }),
+
+  // 审核提交
+  adminReviewSubmission: (submissionId: string, data: { action: 'approve' | 'reject'; review_note?: string; category?: string; tags?: string[] }) =>
+    api.post<unknown, { success: boolean; message: string; workshop_item?: PromptWorkshopItem; submission?: PromptSubmission }>(
+      `/prompt-workshop/admin/submissions/${submissionId}/review`,
+      data
+    ),
+
+  // 添加官方提示词
+  adminCreateItem: (data: { name: string; description?: string; prompt_content: string; category: string; tags?: string[] }) =>
+    api.post<unknown, { success: boolean; item: PromptWorkshopItem }>('/prompt-workshop/admin/items', data),
+
+  // 编辑提示词
+  adminUpdateItem: (itemId: string, data: { name?: string; description?: string; prompt_content?: string; category?: string; tags?: string[]; status?: string }) =>
+    api.put<unknown, { success: boolean; item: PromptWorkshopItem }>(`/prompt-workshop/admin/items/${itemId}`, data),
+
+  // 删除提示词
+  adminDeleteItem: (itemId: string) =>
+    api.delete<unknown, { success: boolean; message: string }>(`/prompt-workshop/admin/items/${itemId}`),
+
+  // 获取统计数据
+  adminGetStats: () =>
+    api.get<unknown, {
+      success: boolean;
+      data: {
+        total_items: number;
+        total_official: number;
+        total_pending: number;
+        total_downloads: number;
+        total_likes: number;
+      };
+    }>('/prompt-workshop/admin/stats'),
 };
 
 export const polishApi = {

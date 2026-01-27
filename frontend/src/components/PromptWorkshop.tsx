@@ -19,6 +19,7 @@ import {
   Typography,
   Pagination,
   Alert,
+  Statistic,
 } from 'antd';
 import {
   SearchOutlined,
@@ -35,12 +36,15 @@ import {
   DeleteOutlined,
   CloudOutlined,
   DisconnectOutlined,
+  SettingOutlined,
+  PlusOutlined,
 } from '@ant-design/icons';
-import { promptWorkshopApi } from '../services/api';
+import { promptWorkshopApi, authApi } from '../services/api';
 import type {
   PromptWorkshopItem,
   PromptSubmission,
   PromptSubmissionCreate,
+  User,
 } from '../types';
 import { PROMPT_CATEGORIES } from '../types';
 
@@ -86,19 +90,48 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
   // 导入状态
   const [importingId, setImportingId] = useState<string | null>(null);
   
+  // 当前用户
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  
+  // 管理员审核相关
+  const [adminSubmissions, setAdminSubmissions] = useState<PromptSubmission[]>([]);
+  const [adminSubmissionsLoading, setAdminSubmissionsLoading] = useState(false);
+  const [adminPendingCount, setAdminPendingCount] = useState(0);
+  const [adminStats, setAdminStats] = useState<{
+    total_items: number;
+    total_official: number;
+    total_pending: number;
+    total_downloads: number;
+    total_likes: number;
+  } | null>(null);
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  const [reviewingSubmission, setReviewingSubmission] = useState<PromptSubmission | null>(null);
+  const [reviewForm] = Form.useForm();
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [addOfficialModalOpen, setAddOfficialModalOpen] = useState(false);
+  const [addOfficialForm] = Form.useForm();
+  const [addOfficialLoading, setAddOfficialLoading] = useState(false);
+  
   const isMobile = window.innerWidth <= 768;
+  
+  // 判断是否为服务端管理员
+  const isServerAdmin = serviceStatus?.mode === 'server' && currentUser?.is_admin;
 
-  // 加载服务状态
+  // 加载服务状态和用户信息
   useEffect(() => {
-    const checkStatus = async () => {
+    const init = async () => {
       try {
-        const status = await promptWorkshopApi.getStatus();
+        const [status, user] = await Promise.all([
+          promptWorkshopApi.getStatus(),
+          authApi.getCurrentUser().catch(() => null),
+        ]);
         setServiceStatus(status);
+        setCurrentUser(user);
       } catch (error) {
-        console.error('Failed to check workshop status:', error);
+        console.error('Failed to initialize:', error);
       }
     };
-    checkStatus();
+    init();
   }, []);
 
   // 加载工坊列表
@@ -516,12 +549,186 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
     </div>
   );
 
+  // 加载管理员待审核列表
+  const loadAdminSubmissions = async () => {
+    if (!isServerAdmin) return;
+    
+    setAdminSubmissionsLoading(true);
+    try {
+      const [subsResponse, statsResponse] = await Promise.all([
+        promptWorkshopApi.adminGetSubmissions({ status: 'pending', limit: 50 }),
+        promptWorkshopApi.adminGetStats(),
+      ]);
+      setAdminSubmissions(subsResponse.data?.items || []);
+      setAdminPendingCount(subsResponse.data?.pending_count || 0);
+      setAdminStats(statsResponse.data || null);
+    } catch (error) {
+      console.error('Failed to load admin submissions:', error);
+    } finally {
+      setAdminSubmissionsLoading(false);
+    }
+  };
+
+  // 审核提交
+  const handleReview = async (action: 'approve' | 'reject') => {
+    if (!reviewingSubmission) return;
+    
+    setReviewLoading(true);
+    try {
+      const values = reviewForm.getFieldsValue();
+      await promptWorkshopApi.adminReviewSubmission(reviewingSubmission.id, {
+        action,
+        review_note: values.review_note,
+        category: values.category,
+        tags: values.tags ? values.tags.split(',').map((t: string) => t.trim()).filter(Boolean) : undefined,
+      });
+      message.success(action === 'approve' ? '已通过审核' : '已拒绝');
+      setReviewModalOpen(false);
+      setReviewingSubmission(null);
+      reviewForm.resetFields();
+      loadAdminSubmissions();
+      loadItems();
+    } catch (error) {
+      console.error('Failed to review:', error);
+      message.error('审核失败');
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
+  // 添加官方提示词
+  const handleAddOfficial = async (values: { name: string; category: string; description?: string; prompt_content: string; tags?: string }) => {
+    setAddOfficialLoading(true);
+    try {
+      await promptWorkshopApi.adminCreateItem({
+        ...values,
+        tags: values.tags ? values.tags.split(',').map(t => t.trim()).filter(Boolean) : undefined,
+      });
+      message.success('添加成功');
+      setAddOfficialModalOpen(false);
+      addOfficialForm.resetFields();
+      loadItems();
+      loadAdminSubmissions();
+    } catch (error) {
+      console.error('Failed to add official item:', error);
+      message.error('添加失败');
+    } finally {
+      setAddOfficialLoading(false);
+    }
+  };
+
+  // 渲染管理员面板
+  const renderAdminPanel = () => (
+    <div>
+      {/* 统计数据 */}
+      {adminStats && (
+        <Row gutter={16} style={{ marginBottom: 24 }}>
+          <Col span={4}>
+            <Card size="small">
+              <Statistic title="总提示词" value={adminStats.total_items} />
+            </Card>
+          </Col>
+          <Col span={4}>
+            <Card size="small">
+              <Statistic title="官方提示词" value={adminStats.total_official} />
+            </Card>
+          </Col>
+          <Col span={4}>
+            <Card size="small">
+              <Statistic title="待审核" value={adminStats.total_pending} valueStyle={{ color: '#faad14' }} />
+            </Card>
+          </Col>
+          <Col span={4}>
+            <Card size="small">
+              <Statistic title="总下载" value={adminStats.total_downloads} />
+            </Card>
+          </Col>
+          <Col span={4}>
+            <Card size="small">
+              <Statistic title="总点赞" value={adminStats.total_likes} />
+            </Card>
+          </Col>
+          <Col span={4}>
+            <Card size="small" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => setAddOfficialModalOpen(true)}>
+                添加官方
+              </Button>
+            </Card>
+          </Col>
+        </Row>
+      )}
+      
+      {/* 待审核列表 */}
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Text strong>待审核提交 ({adminPendingCount})</Text>
+        <Button icon={<SyncOutlined />} onClick={loadAdminSubmissions}>
+          刷新
+        </Button>
+      </div>
+      
+      <Spin spinning={adminSubmissionsLoading}>
+        {adminSubmissions.length === 0 ? (
+          <Empty description="暂无待审核提交" />
+        ) : (
+          <Row gutter={[16, 16]}>
+            {adminSubmissions.map(sub => (
+              <Col key={sub.id} xs={24} sm={12} md={8} lg={6}>
+                <Card
+                  style={{ borderRadius: 12 }}
+                  bodyStyle={{ padding: 16 }}
+                  actions={[
+                    <Button
+                      key="approve"
+                      type="link"
+                      style={{ color: '#52c41a' }}
+                      onClick={() => {
+                        setReviewingSubmission(sub);
+                        reviewForm.setFieldsValue({
+                          category: sub.category,
+                          tags: sub.tags?.join(', '),
+                        });
+                        setReviewModalOpen(true);
+                      }}
+                    >
+                      审核
+                    </Button>,
+                  ]}
+                >
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <Text strong>{sub.name}</Text>
+                    <Tag color={getCategoryColor(sub.category)}>
+                      {getCategoryName(sub.category)}
+                    </Tag>
+                    
+                    <Paragraph
+                      type="secondary"
+                      style={{ fontSize: 12, marginBottom: 0 }}
+                      ellipsis={{ rows: 3 }}
+                    >
+                      {sub.prompt_content}
+                    </Paragraph>
+                    
+                    <div style={{ fontSize: 11, color: '#999' }}>
+                      <div>提交者: {sub.submitter_name || '未知'}</div>
+                      <div>来源: {sub.source_instance}</div>
+                      <div>时间: {sub.created_at ? new Date(sub.created_at).toLocaleDateString() : '-'}</div>
+                    </div>
+                  </Space>
+                </Card>
+              </Col>
+            ))}
+          </Row>
+        )}
+      </Spin>
+    </div>
+  );
+
   return (
     <div>
       {/* 标题和操作区 */}
-      <div style={{ 
-        display: 'flex', 
-        justifyContent: 'space-between', 
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
         alignItems: 'center',
         marginBottom: 16,
         flexWrap: 'wrap',
@@ -546,7 +753,10 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
       {/* 标签页 */}
       <Tabs
         defaultActiveKey="browse"
-        onChange={key => key === 'submissions' && loadMySubmissions()}
+        onChange={key => {
+          if (key === 'submissions') loadMySubmissions();
+          if (key === 'admin') loadAdminSubmissions();
+        }}
         items={[
           {
             key: 'browse',
@@ -562,6 +772,16 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
             ),
             children: renderMySubmissions(),
           },
+          // 仅服务端管理员显示管理面板
+          ...(isServerAdmin ? [{
+            key: 'admin',
+            label: (
+              <Badge count={adminPendingCount} size="small">
+                <span><SettingOutlined /> 管理审核</span>
+              </Badge>
+            ),
+            children: renderAdminPanel(),
+          }] : []),
         ]}
       />
 
@@ -715,6 +935,141 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
             </Row>
           </div>
         )}
+      </Modal>
+      {/* 审核弹窗 */}
+      <Modal
+        title={`审核: ${reviewingSubmission?.name}`}
+        open={reviewModalOpen}
+        onCancel={() => {
+          setReviewModalOpen(false);
+          setReviewingSubmission(null);
+          reviewForm.resetFields();
+        }}
+        footer={null}
+        width={700}
+      >
+        {reviewingSubmission && (
+          <div>
+            <div style={{
+              backgroundColor: '#f5f5f5',
+              padding: 16,
+              borderRadius: 8,
+              marginBottom: 16,
+              maxHeight: 300,
+              overflow: 'auto',
+            }}>
+              <Text strong style={{ display: 'block', marginBottom: 8 }}>提示词内容预览</Text>
+              <pre style={{
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                margin: 0,
+                fontSize: 13,
+              }}>
+                {reviewingSubmission.prompt_content}
+              </pre>
+            </div>
+            
+            <Form form={reviewForm} layout="vertical">
+              <Form.Item name="category" label="分类（可修改）">
+                <Select>
+                  {categoryOptions.map(cat => (
+                    <Select.Option key={cat.value} value={cat.value}>{cat.label}</Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+              
+              <Form.Item name="tags" label="标签（可修改，逗号分隔）">
+                <Input placeholder="武侠, 对话, 细腻" />
+              </Form.Item>
+              
+              <Form.Item name="review_note" label="审核备注">
+                <TextArea rows={2} placeholder="拒绝时请填写原因..." />
+              </Form.Item>
+              
+              <Form.Item>
+                <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+                  <Button onClick={() => setReviewModalOpen(false)}>
+                    取消
+                  </Button>
+                  <Button danger loading={reviewLoading} onClick={() => handleReview('reject')}>
+                    拒绝
+                  </Button>
+                  <Button type="primary" loading={reviewLoading} onClick={() => handleReview('approve')}>
+                    通过
+                  </Button>
+                </Space>
+              </Form.Item>
+            </Form>
+          </div>
+        )}
+      </Modal>
+
+      {/* 添加官方提示词弹窗 */}
+      <Modal
+        title="添加官方提示词"
+        open={addOfficialModalOpen}
+        onCancel={() => {
+          setAddOfficialModalOpen(false);
+          addOfficialForm.resetFields();
+        }}
+        footer={null}
+        width={600}
+      >
+        <Form
+          form={addOfficialForm}
+          layout="vertical"
+          onFinish={handleAddOfficial}
+        >
+          <Form.Item
+            name="name"
+            label="名称"
+            rules={[{ required: true, message: '请输入名称' }]}
+          >
+            <Input placeholder="提示词名称" maxLength={50} />
+          </Form.Item>
+          
+          <Form.Item
+            name="category"
+            label="分类"
+            rules={[{ required: true, message: '请选择分类' }]}
+          >
+            <Select placeholder="选择分类">
+              {categoryOptions.map(cat => (
+                <Select.Option key={cat.value} value={cat.value}>{cat.label}</Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+          
+          <Form.Item name="description" label="描述">
+            <TextArea rows={2} placeholder="简要描述" maxLength={200} />
+          </Form.Item>
+          
+          <Form.Item
+            name="prompt_content"
+            label="提示词内容"
+            rules={[{ required: true, message: '请输入提示词内容' }]}
+          >
+            <TextArea rows={8} placeholder="输入完整的提示词内容..." />
+          </Form.Item>
+          
+          <Form.Item name="tags" label="标签">
+            <Input placeholder="逗号分隔，如: 武侠,对话,细腻" />
+          </Form.Item>
+          
+          <Form.Item>
+            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+              <Button onClick={() => {
+                setAddOfficialModalOpen(false);
+                addOfficialForm.resetFields();
+              }}>
+                取消
+              </Button>
+              <Button type="primary" htmlType="submit" loading={addOfficialLoading}>
+                添加
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
       </Modal>
     </div>
   );
