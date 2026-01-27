@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
 from typing import Optional
+from datetime import datetime
 import uuid
 
 from app.database import get_db
@@ -432,25 +433,28 @@ async def submit_prompt(
     """提交提示词"""
     user_identifier = get_user_identifier_from_request(request)
     
-    # 获取用户显示名称
-    submitter_name = "未知用户"
-    is_proxy = getattr(request.state, 'is_proxy_request', False)
+    # 作者名称优先使用用户填写的 author_display_name
+    # 如果用户未填写，才使用系统获取的用户名
+    submitter_name = data.author_display_name
     
-    if is_proxy:
-        # 代理请求，从请求数据中获取提交者名称
-        submitter_name = data.author_display_name or "未知用户"
-    else:
-        # 本地请求，从用户对象获取
-        user = getattr(request.state, 'user', None)
-        if user:
-            submitter_name = user.display_name
+    if not submitter_name:
+        # 用户未填写作者名称，尝试从系统获取
+        is_proxy = getattr(request.state, 'is_proxy_request', False)
+        
+        if is_proxy:
+            submitter_name = "未知用户"
         else:
-            # 尝试从数据库获取
-            user_id = getattr(request.state, 'user_id', None)
-            if user_id:
-                from app.user_manager import user_manager
-                user = await user_manager.get_user(user_id)
-                submitter_name = user.display_name if user else "未知用户"
+            user = getattr(request.state, 'user', None)
+            if user:
+                submitter_name = user.display_name
+            else:
+                user_id = getattr(request.state, 'user_id', None)
+                if user_id:
+                    from app.user_manager import user_manager
+                    user = await user_manager.get_user(user_id)
+                    submitter_name = user.display_name if user else "未知用户"
+                else:
+                    submitter_name = "未知用户"
     
     if is_workshop_server():
         # 直接创建提交记录
@@ -668,7 +672,7 @@ async def admin_review_submission(
         submission.workshop_item_id = new_item.id
         submission.reviewer_id = admin_user_id
         submission.review_note = data.review_note
-        submission.reviewed_at = func.now()
+        submission.reviewed_at = datetime.utcnow()
         
         await db.commit()
         await db.refresh(new_item)
@@ -682,9 +686,10 @@ async def admin_review_submission(
         submission.status = "rejected"
         submission.reviewer_id = admin_user_id
         submission.review_note = data.review_note
-        submission.reviewed_at = func.now()
+        submission.reviewed_at = datetime.utcnow()
         
         await db.commit()
+        await db.refresh(submission)
         
         return {
             "success": True,

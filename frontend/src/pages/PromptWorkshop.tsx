@@ -1096,6 +1096,15 @@ export default function PromptWorkshop() {
             <TextArea rows={6} placeholder="输入完整的提示词内容..." />
           </Form.Item>
           
+          <Form.Item
+            name="author_display_name"
+            label="作者署名"
+            rules={[{ required: true, message: '请输入作者署名' }]}
+            tooltip="发布后显示的作者名称"
+          >
+            <Input placeholder="请输入作者署名（必填）" maxLength={50} />
+          </Form.Item>
+          
           <Form.Item name="tags" label="标签">
             <Input placeholder="输入标签，多个用逗号分隔，如: 武侠,对话,细腻" />
           </Form.Item>
