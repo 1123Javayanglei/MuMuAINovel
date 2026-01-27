@@ -39,40 +39,38 @@ def get_user_identifier(user_id: str) -> str:
 def get_user_identifier_from_request(request: Request) -> str:
     """
     从请求中获取用户标识
-    - 服务端模式：优先从 Header 获取（来自其他实例的代理请求）
-    - 客户端模式：从本地用户获取
+    中间件已经处理了代理请求，将用户标识存储在 request.state.user_id
+    - 代理请求：user_id 格式为 "instance_id:user_id"
+    - 本地请求：user_id 是本地用户ID，需要转换为 "instance_id:user_id" 格式
     """
-    if is_workshop_server():
-        # 服务端模式：检查是否来自其他实例的代理请求
-        instance_id = request.headers.get("X-Instance-ID")
-        header_user_id = request.headers.get("X-User-ID")
-        if instance_id and header_user_id:
-            # 来自其他实例的请求，使用 Header 中的用户标识
-            return header_user_id
-    
-    # 本地用户
     user_id = getattr(request.state, 'user_id', None)
     if not user_id:
         raise HTTPException(status_code=401, detail="未登录或用户ID缺失")
-    return get_user_identifier(user_id)
+    
+    # 检查是否为代理请求（user_id 已经是完整格式）
+    is_proxy = getattr(request.state, 'is_proxy_request', False)
+    if is_proxy:
+        # 代理请求，user_id 已经是 "instance_id:user_id" 格式
+        return user_id
+    else:
+        # 本地请求，需要添加实例前缀
+        return get_user_identifier(user_id)
 
 
 def get_optional_user_identifier(request: Request) -> Optional[str]:
     """
     获取可选的用户标识（用于公开API，可以没有用户）
     """
-    if is_workshop_server():
-        # 服务端模式：检查是否来自其他实例的代理请求
-        instance_id = request.headers.get("X-Instance-ID")
-        header_user_id = request.headers.get("X-User-ID")
-        if instance_id and header_user_id:
-            return header_user_id
-    
-    # 本地用户
     user_id = getattr(request.state, 'user_id', None)
-    if user_id:
+    if not user_id:
+        return None
+    
+    # 检查是否为代理请求
+    is_proxy = getattr(request.state, 'is_proxy_request', False)
+    if is_proxy:
+        return user_id
+    else:
         return get_user_identifier(user_id)
-    return None
 
 
 def _item_to_dict(item: PromptWorkshopItem, is_liked: bool = False) -> dict:
@@ -434,34 +432,34 @@ async def submit_prompt(
     
     # 获取用户显示名称
     submitter_name = "未知用户"
-    if is_workshop_server():
-        # 服务端模式：检查是否来自代理请求
-        instance_id = request.headers.get("X-Instance-ID")
-        if instance_id:
-            # 代理请求，从请求数据中获取提交者名称
-            submitter_name = data.author_display_name or "未知用户"
+    is_proxy = getattr(request.state, 'is_proxy_request', False)
+    
+    if is_proxy:
+        # 代理请求，从请求数据中获取提交者名称
+        submitter_name = data.author_display_name or "未知用户"
+    else:
+        # 本地请求，从用户对象获取
+        user = getattr(request.state, 'user', None)
+        if user:
+            submitter_name = user.display_name
         else:
-            # 本地请求
+            # 尝试从数据库获取
             user_id = getattr(request.state, 'user_id', None)
             if user_id:
                 from app.user_manager import user_manager
                 user = await user_manager.get_user(user_id)
                 submitter_name = user.display_name if user else "未知用户"
-    else:
-        # 客户端模式：本地用户
-        user_id = getattr(request.state, 'user_id', None)
-        if user_id:
-            from app.user_manager import user_manager
-            user = await user_manager.get_user(user_id)
-            submitter_name = user.display_name if user else "未知用户"
     
     if is_workshop_server():
         # 直接创建提交记录
+        # 对于代理请求，source_instance 从 Header 获取
+        source_instance = request.headers.get("X-Instance-ID") or INSTANCE_ID
+        
         submission = PromptSubmission(
             id=str(uuid.uuid4()),
             submitter_id=user_identifier,
             submitter_name=submitter_name,
-            source_instance=INSTANCE_ID,
+            source_instance=source_instance,
             name=data.name,
             description=data.description,
             prompt_content=data.prompt_content,
