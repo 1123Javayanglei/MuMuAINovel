@@ -233,6 +233,10 @@ export default function PromptWorkshop() {
       setIsSubmitModalOpen(false);
       submitForm.resetFields();
       loadMySubmissions();
+      // 如果是服务端管理员，刷新待审核列表
+      if (isServerAdmin) {
+        loadAdminSubmissions();
+      }
     } catch (error) {
       console.error('Failed to submit:', error);
       message.error('提交失败');
@@ -247,6 +251,10 @@ export default function PromptWorkshop() {
       await promptWorkshopApi.withdrawSubmission(submissionId);
       message.success('已撤回');
       loadMySubmissions();
+      // 如果是服务端管理员，刷新待审核列表
+      if (isServerAdmin) {
+        loadAdminSubmissions();
+      }
     } catch (error) {
       console.error('Failed to withdraw:', error);
       message.error('撤回失败');
@@ -261,11 +269,16 @@ export default function PromptWorkshop() {
       okText: '删除',
       okType: 'danger',
       cancelText: '取消',
+      centered: true,
       onOk: async () => {
         try {
           await promptWorkshopApi.deleteSubmission(submission.id);
           message.success('删除成功');
           loadMySubmissions();
+          // 如果是服务端管理员，刷新相关列表
+          if (isServerAdmin) {
+            loadAdminSubmissions();
+          }
         } catch (error) {
           console.error('Failed to delete submission:', error);
           message.error('删除失败');
@@ -667,6 +680,7 @@ export default function PromptWorkshop() {
       okText: '删除',
       okType: 'danger',
       cancelText: '取消',
+      centered: true,
       onOk: async () => {
         try {
           await promptWorkshopApi.adminDeleteItem(item.id);
@@ -736,8 +750,10 @@ export default function PromptWorkshop() {
       setReviewModalOpen(false);
       setReviewingSubmission(null);
       reviewForm.resetFields();
+      // 刷新所有相关数据
       loadAdminSubmissions();
       loadItems();
+      loadPublishedItems();  // 通过时会新增到已发布列表
     } catch (error) {
       console.error('Failed to review:', error);
       message.error('审核失败');
@@ -1050,6 +1066,7 @@ export default function PromptWorkshop() {
         }}
         footer={null}
         width={isMobile ? '100%' : 600}
+        centered
       >
         <Alert
           type="info"
@@ -1148,6 +1165,7 @@ export default function PromptWorkshop() {
           </Button>,
         ]}
         width={isMobile ? '100%' : 700}
+        centered
       >
         {detailItem && (
           <div>
@@ -1211,6 +1229,7 @@ export default function PromptWorkshop() {
         }}
         footer={null}
         width={700}
+        centered
       >
         {reviewingSubmission && (
           <div>
@@ -1278,6 +1297,7 @@ export default function PromptWorkshop() {
         }}
         footer={null}
         width={600}
+        centered
       >
         <Form
           form={addOfficialForm}
@@ -1347,6 +1367,7 @@ export default function PromptWorkshop() {
         }}
         footer={null}
         width={600}
+        centered
       >
         <Form
           form={editForm}
