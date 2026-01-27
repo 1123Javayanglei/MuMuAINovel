@@ -241,7 +241,7 @@ export default function PromptWorkshop() {
     }
   };
 
-  // 撤回提交
+  // 撤回提交（pending状态）
   const handleWithdraw = async (submissionId: string) => {
     try {
       await promptWorkshopApi.withdrawSubmission(submissionId);
@@ -251,6 +251,27 @@ export default function PromptWorkshop() {
       console.error('Failed to withdraw:', error);
       message.error('撤回失败');
     }
+  };
+
+  // 删除提交记录（已审核状态）
+  const handleDeleteSubmission = async (submission: PromptSubmission) => {
+    Modal.confirm({
+      title: '删除提交记录',
+      content: `确定要删除「${submission.name}」的提交记录吗？此操作不可恢复。`,
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await promptWorkshopApi.deleteSubmission(submission.id);
+          message.success('删除成功');
+          loadMySubmissions();
+        } catch (error) {
+          console.error('Failed to delete submission:', error);
+          message.error('删除失败');
+        }
+      },
+    });
   };
 
   // 查看详情
@@ -569,17 +590,30 @@ export default function PromptWorkshop() {
                       提交时间: {sub.created_at ? new Date(sub.created_at).toLocaleDateString() : '-'}
                     </div>
                     
-                    {sub.status === 'pending' && (
-                      <Button
-                        type="link"
-                        danger
-                        size="small"
-                        icon={<DeleteOutlined />}
-                        onClick={() => handleWithdraw(sub.id)}
-                      >
-                        撤回
-                      </Button>
-                    )}
+                    <Space>
+                      {sub.status === 'pending' && (
+                        <Button
+                          type="link"
+                          danger
+                          size="small"
+                          icon={<DeleteOutlined />}
+                          onClick={() => handleWithdraw(sub.id)}
+                        >
+                          撤回
+                        </Button>
+                      )}
+                      {sub.status !== 'pending' && (
+                        <Button
+                          type="link"
+                          danger
+                          size="small"
+                          icon={<DeleteOutlined />}
+                          onClick={() => handleDeleteSubmission(sub)}
+                        >
+                          删除记录
+                        </Button>
+                      )}
+                    </Space>
                   </Space>
                 </Card>
               </Col>

@@ -695,9 +695,15 @@ export const promptWorkshopApi = {
       { params: { status } }
     ),
 
-  // 撤回提交
+  // 撤回提交（pending状态）
   withdrawSubmission: (submissionId: string) =>
     api.delete<unknown, { success: boolean; message: string }>(`/prompt-workshop/submissions/${submissionId}`),
+
+  // 删除提交记录（所有状态，需要 force=true）
+  deleteSubmission: (submissionId: string) =>
+    api.delete<unknown, { success: boolean; message: string }>(`/prompt-workshop/submissions/${submissionId}`, {
+      params: { force: true }
+    }),
 
   // ========== 管理员 API（仅服务端模式可用） ==========
   

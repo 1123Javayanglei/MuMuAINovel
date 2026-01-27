@@ -157,12 +157,17 @@ class WorkshopClient:
     async def withdraw_submission(
         self,
         submission_id: str,
-        user_identifier: str
+        user_identifier: str,
+        force: bool = False
     ) -> Dict:
-        """撤回提交"""
+        """撤回/删除提交"""
+        params = {}
+        if force:
+            params["force"] = "true"
         return await self._request(
             "DELETE",
             f"/submissions/{submission_id}",
+            params=params if params else None,
             user_identifier=user_identifier
         )
 

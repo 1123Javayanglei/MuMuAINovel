@@ -533,9 +533,14 @@ async def get_my_submissions(
 async def withdraw_submission(
     submission_id: str,
     request: Request,
+    force: bool = False,
     db: AsyncSession = Depends(get_db)
 ):
-    """撤回待审核的提交"""
+    """
+    删除提交记录
+    - 待审核(pending)的提交可以直接撤回
+    - 已审核(approved/rejected)的提交需要 force=True 参数才能删除
+    """
     user_identifier = get_user_identifier_from_request(request)
     
     if is_workshop_server():
@@ -549,16 +554,21 @@ async def withdraw_submission(
         
         if not submission:
             raise HTTPException(status_code=404, detail="提交记录不存在")
-        if submission.status != "pending":
-            raise HTTPException(status_code=400, detail="只能撤回待审核的提交")
+        
+        # 待审核的可以直接撤回，已审核的需要 force 参数
+        if submission.status != "pending" and not force:
+            raise HTTPException(status_code=400, detail="只能撤回待审核的提交，删除已审核记录请使用 force 参数")
         
         await db.delete(submission)
         await db.commit()
         
-        return {"success": True, "message": "撤回成功"}
+        if submission.status == "pending":
+            return {"success": True, "message": "撤回成功"}
+        else:
+            return {"success": True, "message": "删除成功"}
     else:
         try:
-            return await workshop_client.withdraw_submission(submission_id, user_identifier)
+            return await workshop_client.withdraw_submission(submission_id, user_identifier, force)
         except WorkshopClientError as e:
             raise HTTPException(status_code=503, detail=str(e))
 
