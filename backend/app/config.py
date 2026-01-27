@@ -128,17 +128,34 @@ config_logger.debug(f"AI提供商: {settings.default_ai_provider}")
 # ==================== 提示词工坊实例标识 ====================
 
 def get_or_create_instance_id() -> str:
-    """获取或创建实例唯一标识"""
+    """获取或创建实例唯一标识
+    
+    - Server 模式：固定使用 "server" 作为标识，确保与所有 Client 实例区分
+    - Client 模式：从 .instance_id 文件读取或自动生成唯一标识
+    """
+    # Server 模式使用固定标识
+    if settings.WORKSHOP_MODE.lower() == "server":
+        config_logger.info("Server 模式：使用固定实例标识 'server'")
+        return "server"
+    
+    # Client 模式：从文件读取或生成
     instance_file = PROJECT_ROOT / ".instance_id"
     if instance_file.exists():
         with open(instance_file, 'r') as f:
-            return f.read().strip()
-    else:
-        instance_id = str(uuid.uuid4())[:12]
+            instance_id = f.read().strip()
+            if instance_id and instance_id != "server":  # 确保不与 server 冲突
+                return instance_id
+    
+    # 生成新的实例ID
+    instance_id = str(uuid.uuid4())[:12]
+    try:
         with open(instance_file, 'w') as f:
             f.write(instance_id)
         config_logger.info(f"生成新的实例标识: {instance_id}")
-        return instance_id
+    except Exception as e:
+        config_logger.warning(f"无法保存实例标识到文件: {e}")
+    
+    return instance_id
 
 INSTANCE_ID = get_or_create_instance_id()
 

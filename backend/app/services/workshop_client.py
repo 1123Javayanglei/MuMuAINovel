@@ -99,9 +99,9 @@ class WorkshopClient:
             user_identifier=user_identifier
         )
     
-    async def get_item(self, item_id: str) -> Dict:
+    async def get_item(self, item_id: str, user_identifier: Optional[str] = None) -> Dict:
         """获取单个提示词详情"""
-        return await self._request("GET", f"/items/{item_id}")
+        return await self._request("GET", f"/items/{item_id}", user_identifier=user_identifier)
     
     async def record_download(self, item_id: str, user_identifier: str) -> Dict:
         """记录下载"""
@@ -111,7 +111,8 @@ class WorkshopClient:
             json={
                 "instance_id": INSTANCE_ID,
                 "user_identifier": user_identifier
-            }
+            },
+            user_identifier=user_identifier
         )
     
     async def toggle_like(self, item_id: str, user_identifier: str) -> Dict:

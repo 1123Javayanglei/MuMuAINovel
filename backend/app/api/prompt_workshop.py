@@ -258,8 +258,10 @@ async def _get_items_local(
 
 
 @router.get("/items/{item_id}")
-async def get_item(item_id: str, db: AsyncSession = Depends(get_db)):
+async def get_item(item_id: str, request: Request, db: AsyncSession = Depends(get_db)):
     """获取单个提示词详情"""
+    user_identifier = get_optional_user_identifier(request)
+    
     if is_workshop_server():
         result = await db.execute(
             select(PromptWorkshopItem).where(
@@ -273,7 +275,7 @@ async def get_item(item_id: str, db: AsyncSession = Depends(get_db)):
         return {"success": True, "data": _item_to_dict(item)}
     else:
         try:
-            return await workshop_client.get_item(item_id)
+            return await workshop_client.get_item(item_id, user_identifier=user_identifier)
         except WorkshopClientError as e:
             raise HTTPException(status_code=503, detail=str(e))
 
@@ -305,7 +307,7 @@ async def import_item(
     else:
         # 从云端获取
         try:
-            result = await workshop_client.get_item(item_id)
+            result = await workshop_client.get_item(item_id, user_identifier=user_identifier)
             item_data = result.get("data", result)
             
             # 通知云端增加下载计数

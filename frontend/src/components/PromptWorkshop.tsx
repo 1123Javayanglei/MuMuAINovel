@@ -112,6 +112,14 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
   const [addOfficialForm] = Form.useForm();
   const [addOfficialLoading, setAddOfficialLoading] = useState(false);
   
+  // 已发布提示词管理
+  const [publishedItems, setPublishedItems] = useState<PromptWorkshopItem[]>([]);
+  const [publishedLoading, setPublishedLoading] = useState(false);
+  const [editingItem, setEditingItem] = useState<PromptWorkshopItem | null>(null);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editForm] = Form.useForm();
+  const [editLoading, setEditLoading] = useState(false);
+  
   const isMobile = window.innerWidth <= 768;
   
   // 判断是否为服务端管理员
@@ -569,6 +577,81 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
     }
   };
 
+  // 加载已发布的提示词列表（管理员用）
+  const loadPublishedItems = async () => {
+    if (!isServerAdmin) return;
+    
+    setPublishedLoading(true);
+    try {
+      const response = await promptWorkshopApi.getItems({ limit: 100 });
+      setPublishedItems(response.data?.items || []);
+    } catch (error) {
+      console.error('Failed to load published items:', error);
+    } finally {
+      setPublishedLoading(false);
+    }
+  };
+
+  // 删除已发布的提示词
+  const handleDeleteItem = async (item: PromptWorkshopItem) => {
+    Modal.confirm({
+      title: '确认删除',
+      content: `确定要删除「${item.name}」吗？此操作不可恢复。`,
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await promptWorkshopApi.adminDeleteItem(item.id);
+          message.success('删除成功');
+          loadPublishedItems();
+          loadAdminSubmissions();
+          loadItems();
+        } catch (error) {
+          console.error('Failed to delete item:', error);
+          message.error('删除失败');
+        }
+      },
+    });
+  };
+
+  // 编辑已发布的提示词
+  const handleEditItem = async (values: { name: string; category: string; description?: string; prompt_content: string; tags?: string }) => {
+    if (!editingItem) return;
+    
+    setEditLoading(true);
+    try {
+      await promptWorkshopApi.adminUpdateItem(editingItem.id, {
+        ...values,
+        tags: values.tags ? values.tags.split(',').map(t => t.trim()).filter(Boolean) : undefined,
+      });
+      message.success('修改成功');
+      setEditModalOpen(false);
+      setEditingItem(null);
+      editForm.resetFields();
+      loadPublishedItems();
+      loadItems();
+    } catch (error) {
+      console.error('Failed to update item:', error);
+      message.error('修改失败');
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  // 打开编辑弹窗
+  const openEditModal = (item: PromptWorkshopItem) => {
+    setEditingItem(item);
+    editForm.setFieldsValue({
+      name: item.name,
+      category: item.category,
+      description: item.description,
+      prompt_content: item.prompt_content,
+      tags: item.tags?.join(', '),
+    });
+    setEditModalOpen(true);
+  };
+
   // 审核提交
   const handleReview = async (action: 'approve' | 'reject') => {
     if (!reviewingSubmission) return;
@@ -609,6 +692,7 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
       addOfficialForm.resetFields();
       loadItems();
       loadAdminSubmissions();
+      loadPublishedItems();
     } catch (error) {
       console.error('Failed to add official item:', error);
       message.error('添加失败');
@@ -720,6 +804,73 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
           </Row>
         )}
       </Spin>
+      
+      {/* 已发布提示词管理 */}
+      <div style={{ marginTop: 32, marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Text strong>已发布提示词管理 ({publishedItems.length})</Text>
+        <Button icon={<SyncOutlined />} onClick={loadPublishedItems}>
+          刷新
+        </Button>
+      </div>
+      
+      <Spin spinning={publishedLoading}>
+        {publishedItems.length === 0 ? (
+          <Empty description="暂无已发布提示词" />
+        ) : (
+          <Row gutter={[16, 16]}>
+            {publishedItems.map(item => (
+              <Col key={item.id} xs={24} sm={12} md={8} lg={6}>
+                <Card
+                  style={{ borderRadius: 12 }}
+                  bodyStyle={{ padding: 16 }}
+                  actions={[
+                    <Tooltip title="编辑" key="edit">
+                      <Button
+                        type="link"
+                        icon={<SettingOutlined />}
+                        onClick={() => openEditModal(item)}
+                      />
+                    </Tooltip>,
+                    <Tooltip title="删除" key="delete">
+                      <Button
+                        type="link"
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={() => handleDeleteItem(item)}
+                      />
+                    </Tooltip>,
+                  ]}
+                >
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text strong ellipsis style={{ maxWidth: 120 }}>{item.name}</Text>
+                      {item.is_official && <Tag color="gold">官方</Tag>}
+                    </div>
+                    <Tag color={getCategoryColor(item.category)}>
+                      {getCategoryName(item.category)}
+                    </Tag>
+                    
+                    <Paragraph
+                      type="secondary"
+                      style={{ fontSize: 12, marginBottom: 0 }}
+                      ellipsis={{ rows: 2 }}
+                    >
+                      {item.prompt_content}
+                    </Paragraph>
+                    
+                    <div style={{ fontSize: 11, color: '#999' }}>
+                      <Space>
+                        <span><HeartOutlined /> {item.like_count || 0}</span>
+                        <span><DownloadOutlined /> {item.download_count || 0}</span>
+                      </Space>
+                    </div>
+                  </Space>
+                </Card>
+              </Col>
+            ))}
+          </Row>
+        )}
+      </Spin>
     </div>
   );
 
@@ -755,7 +906,10 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
         defaultActiveKey="browse"
         onChange={key => {
           if (key === 'submissions') loadMySubmissions();
-          if (key === 'admin') loadAdminSubmissions();
+          if (key === 'admin') {
+            loadAdminSubmissions();
+            loadPublishedItems();
+          }
         }}
         items={[
           {
@@ -772,7 +926,6 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
             ),
             children: renderMySubmissions(),
           },
-          // 仅服务端管理员显示管理面板
           ...(isServerAdmin ? [{
             key: 'admin',
             label: (
@@ -1066,6 +1219,76 @@ export default function PromptWorkshop({ onImportSuccess }: PromptWorkshopProps)
               </Button>
               <Button type="primary" htmlType="submit" loading={addOfficialLoading}>
                 添加
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* 编辑提示词弹窗 */}
+      <Modal
+        title={`编辑: ${editingItem?.name}`}
+        open={editModalOpen}
+        onCancel={() => {
+          setEditModalOpen(false);
+          setEditingItem(null);
+          editForm.resetFields();
+        }}
+        footer={null}
+        width={600}
+      >
+        <Form
+          form={editForm}
+          layout="vertical"
+          onFinish={handleEditItem}
+        >
+          <Form.Item
+            name="name"
+            label="名称"
+            rules={[{ required: true, message: '请输入名称' }]}
+          >
+            <Input placeholder="提示词名称" maxLength={50} />
+          </Form.Item>
+          
+          <Form.Item
+            name="category"
+            label="分类"
+            rules={[{ required: true, message: '请选择分类' }]}
+          >
+            <Select placeholder="选择分类">
+              {categoryOptions.map(cat => (
+                <Select.Option key={cat.value} value={cat.value}>{cat.label}</Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+          
+          <Form.Item name="description" label="描述">
+            <TextArea rows={2} placeholder="简要描述" maxLength={200} />
+          </Form.Item>
+          
+          <Form.Item
+            name="prompt_content"
+            label="提示词内容"
+            rules={[{ required: true, message: '请输入提示词内容' }]}
+          >
+            <TextArea rows={8} placeholder="输入完整的提示词内容..." />
+          </Form.Item>
+          
+          <Form.Item name="tags" label="标签">
+            <Input placeholder="逗号分隔，如: 武侠,对话,细腻" />
+          </Form.Item>
+          
+          <Form.Item>
+            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+              <Button onClick={() => {
+                setEditModalOpen(false);
+                setEditingItem(null);
+                editForm.resetFields();
+              }}>
+                取消
+              </Button>
+              <Button type="primary" htmlType="submit" loading={editLoading}>
+                保存修改
               </Button>
             </Space>
           </Form.Item>
