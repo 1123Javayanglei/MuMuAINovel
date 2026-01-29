@@ -495,7 +495,7 @@ export default function PromptWorkshop() {
                           flex: 1,
                           minHeight: 60,
                         }}
-                        ellipsis={{ rows: 3, tooltip: item.prompt_content }}
+                        ellipsis={{ rows: 3 }}
                       >
                         {item.prompt_content}
                       </Paragraph>
@@ -1184,15 +1184,17 @@ export default function PromptWorkshop() {
               </Paragraph>
             )}
             
-            <div style={{ 
-              backgroundColor: '#f5f5f5', 
-              padding: 16, 
+            <div style={{
+              backgroundColor: '#f5f5f5',
+              padding: 16,
               borderRadius: 8,
               marginBottom: 16,
+              maxHeight: 400,
+              overflow: 'auto',
             }}>
               <Text strong style={{ display: 'block', marginBottom: 8 }}>提示词内容</Text>
-              <pre style={{ 
-                whiteSpace: 'pre-wrap', 
+              <pre style={{
+                whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
                 margin: 0,
                 fontSize: 13,
