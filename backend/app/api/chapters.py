@@ -32,7 +32,8 @@ from app.schemas.chapter import (
     BatchGenerateRequest,
     BatchGenerateResponse,
     BatchGenerateStatusResponse,
-    ExpansionPlanUpdate
+    ExpansionPlanUpdate,
+    PartialRegenerateRequest
 )
 from app.schemas.regeneration import (
     ChapterRegenerateRequest,
@@ -3409,5 +3410,338 @@ async def update_chapter_expansion_plan(
         "summary": chapter.summary,
         "expansion_plan": updated_plan,
         "message": "规划信息更新成功"
+    }
+
+
+# ==================== 局部重写相关API ====================
+
+@router.post("/{chapter_id}/partial-regenerate-stream", summary="流式局部重写选中内容")
+async def partial_regenerate_stream(
+    chapter_id: str,
+    request: Request,
+    partial_request: PartialRegenerateRequest,
+    db: AsyncSession = Depends(get_db),
+    user_ai_service: AIService = Depends(get_user_ai_service)
+):
+    """
+    对章节中选中的部分内容进行流式重写
+    
+    工作流程：
+    1. 验证章节和选中内容的有效性
+    2. 截取上下文（前后文）
+    3. 根据用户要求构建提示词
+    4. 流式生成重写内容
+    5. 返回重写结果（不自动保存，由前端决定是否应用）
+    """
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+    
+    # 验证章节存在
+    chapter_result = await db.execute(
+        select(Chapter).where(Chapter.id == chapter_id)
+    )
+    chapter = chapter_result.scalar_one_or_none()
+    
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+    
+    if not chapter.content or chapter.content.strip() == "":
+        raise HTTPException(status_code=400, detail="章节内容为空")
+    
+    # 验证用户权限
+    await verify_project_access(chapter.project_id, user_id, db)
+    
+    # 验证位置参数
+    content_length = len(chapter.content)
+    if partial_request.start_position >= content_length:
+        raise HTTPException(status_code=400, detail="起始位置超出内容范围")
+    if partial_request.end_position > content_length:
+        raise HTTPException(status_code=400, detail="结束位置超出内容范围")
+    if partial_request.start_position >= partial_request.end_position:
+        raise HTTPException(status_code=400, detail="起始位置必须小于结束位置")
+    
+    # 验证选中的文本是否匹配
+    actual_selected = chapter.content[partial_request.start_position:partial_request.end_position]
+    if actual_selected != partial_request.selected_text:
+        # 位置可能有偏差，尝试在附近查找
+        search_start = max(0, partial_request.start_position - 50)
+        search_end = min(content_length, partial_request.end_position + 50)
+        search_area = chapter.content[search_start:search_end]
+        
+        if partial_request.selected_text in search_area:
+            # 找到了，更新位置
+            offset = search_area.find(partial_request.selected_text)
+            partial_request.start_position = search_start + offset
+            partial_request.end_position = partial_request.start_position + len(partial_request.selected_text)
+            logger.info(f"⚠️ 选中文本位置校正: {partial_request.start_position}-{partial_request.end_position}")
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="选中的文本与章节内容不匹配，请刷新页面后重试"
+            )
+    
+    # 预先获取项目信息和写作风格
+    project_result = await db.execute(
+        select(Project).where(Project.id == chapter.project_id)
+    )
+    project = project_result.scalar_one_or_none()
+    
+    # 获取写作风格
+    style_content = ""
+    style_id = partial_request.style_id
+    
+    # 如果没有指定风格，尝试使用项目的默认风格
+    if not style_id:
+        from app.models.project_default_style import ProjectDefaultStyle
+        default_style_result = await db.execute(
+            select(ProjectDefaultStyle.style_id)
+            .where(ProjectDefaultStyle.project_id == chapter.project_id)
+        )
+        default_style_id = default_style_result.scalar_one_or_none()
+        if default_style_id:
+            style_id = default_style_id
+            logger.info(f"📝 局部重写 - 使用项目默认写作风格: {style_id}")
+    
+    # 获取风格内容
+    if style_id:
+        style_result = await db.execute(
+            select(WritingStyle).where(WritingStyle.id == style_id)
+        )
+        style = style_result.scalar_one_or_none()
+        if style:
+            if style.user_id is None or style.user_id == user_id:
+                style_content = style.prompt_content or ""
+                style_type = "全局预设" if style.user_id is None else "用户自定义"
+                logger.info(f"✅ 局部重写 - 使用写作风格: {style.name} ({style_type})")
+            else:
+                logger.warning(f"⚠️ 风格 {style_id} 不属于当前用户，跳过")
+    
+    async def event_generator():
+        """流式生成事件生成器"""
+        from app.utils.sse_response import WizardProgressTracker
+        tracker = WizardProgressTracker("局部重写")
+        
+        try:
+            yield await tracker.start()
+            yield await tracker.loading("准备重写上下文...", 0.3)
+            
+            # 截取上下文
+            context_chars = partial_request.context_chars
+            start_pos = partial_request.start_position
+            end_pos = partial_request.end_position
+            
+            # 前文：从start_pos往前截取context_chars个字符
+            context_before_start = max(0, start_pos - context_chars)
+            context_before = chapter.content[context_before_start:start_pos]
+            
+            # 后文：从end_pos往后截取context_chars个字符
+            context_after_end = min(content_length, end_pos + context_chars)
+            context_after = chapter.content[end_pos:context_after_end]
+            
+            # 原文
+            original_text = partial_request.selected_text
+            original_word_count = len(original_text)
+            
+            logger.info(f"📝 局部重写 - 原文: {original_word_count}字, 前文: {len(context_before)}字, 后文: {len(context_after)}字")
+            
+            yield await tracker.loading("构建提示词...", 0.5)
+            
+            # 构建字数要求
+            length_requirement = ""
+            if partial_request.length_mode == "similar":
+                min_words = int(original_word_count * 0.8)
+                max_words = int(original_word_count * 1.2)
+                length_requirement = f"保持与原文相近的字数（约{original_word_count}字，允许{min_words}-{max_words}字浮动）"
+            elif partial_request.length_mode == "expand":
+                min_words = int(original_word_count * 1.2)
+                max_words = int(original_word_count * 2.0)
+                length_requirement = f"适当扩展内容（目标{min_words}-{max_words}字）"
+            elif partial_request.length_mode == "condense":
+                min_words = int(original_word_count * 0.5)
+                max_words = int(original_word_count * 0.8)
+                length_requirement = f"精简压缩内容（目标{min_words}-{max_words}字）"
+            elif partial_request.length_mode == "custom" and partial_request.target_word_count:
+                length_requirement = f"目标字数：约{partial_request.target_word_count}字（允许±20%浮动）"
+            else:
+                length_requirement = f"保持与原文相近的字数（约{original_word_count}字）"
+            
+            # 获取提示词模板
+            template = await PromptService.get_template("PARTIAL_REGENERATE", user_id, db)
+            if not template:
+                template = PromptService.PARTIAL_REGENERATE
+            
+            # 构建提示词
+            prompt = PromptService.format_prompt(
+                template,
+                context_before=context_before if context_before else "（这是章节开头）",
+                original_word_count=original_word_count,
+                selected_text=original_text,
+                context_after=context_after if context_after else "（这是章节结尾）",
+                user_instructions=partial_request.user_instructions,
+                length_requirement=length_requirement,
+                style_content=style_content if style_content else "保持与原文一致的叙事风格"
+            )
+            
+            yield await tracker.preparing("开始生成...")
+            
+            # 计算 max_tokens
+            if partial_request.length_mode == "expand":
+                target_words = int(original_word_count * 2.0)
+            elif partial_request.length_mode == "custom" and partial_request.target_word_count:
+                target_words = partial_request.target_word_count
+            else:
+                target_words = int(original_word_count * 1.5)
+            
+            calculated_max_tokens = max(500, min(int(target_words * 3), 8000))
+            
+            # 流式生成
+            full_content = ""
+            chunk_count = 0
+            
+            yield await tracker.generating(
+                current_chars=0,
+                estimated_total=target_words
+            )
+            
+            async for chunk in user_ai_service.generate_text_stream(
+                prompt=prompt,
+                max_tokens=calculated_max_tokens
+            ):
+                full_content += chunk
+                chunk_count += 1
+                
+                # 发送内容块
+                yield await tracker.generating_chunk(chunk)
+                
+                # 每5个chunk发送一次进度更新
+                if chunk_count % 5 == 0:
+                    yield await tracker.generating(
+                        current_chars=len(full_content),
+                        estimated_total=target_words,
+                        message=f'正在重写中... 已生成 {len(full_content)} 字'
+                    )
+                
+                await asyncio.sleep(0)
+            
+            # 清理输出（移除可能的前后缀）
+            full_content = full_content.strip()
+            
+            # 移除常见的AI输出前缀
+            prefixes_to_remove = [
+                "重写后：", "重写后:", "改写后：", "改写后:",
+                "以下是重写后的内容：", "以下是重写后的内容:",
+                "重写内容：", "重写内容:"
+            ]
+            for prefix in prefixes_to_remove:
+                if full_content.startswith(prefix):
+                    full_content = full_content[len(prefix):].strip()
+                    break
+            
+            # 移除首尾可能的引号
+            if (full_content.startswith('"') and full_content.endswith('"')) or \
+               (full_content.startswith("'") and full_content.endswith("'")):
+                full_content = full_content[1:-1]
+            if (full_content.startswith('「') and full_content.endswith('」')) or \
+               (full_content.startswith('『') and full_content.endswith('』')):
+                full_content = full_content[1:-1]
+            
+            new_word_count = len(full_content)
+            
+            logger.info(f"✅ 局部重写完成: 原文{original_word_count}字 -> 新文{new_word_count}字")
+            
+            # 完成
+            yield await tracker.complete("重写完成！")
+            
+            # 发送结果数据
+            yield await tracker.result({
+                'new_text': full_content,
+                'word_count': new_word_count,
+                'original_word_count': original_word_count,
+                'start_position': partial_request.start_position,
+                'end_position': partial_request.end_position
+            })
+            
+            yield await tracker.done()
+            
+        except Exception as e:
+            logger.error(f"❌ 局部重写失败: {str(e)}", exc_info=True)
+            yield await tracker.error(str(e))
+    
+    return create_sse_response(event_generator())
+
+
+@router.post("/{chapter_id}/apply-partial-regenerate", summary="应用局部重写结果")
+async def apply_partial_regenerate(
+    chapter_id: str,
+    request: Request,
+    apply_request: dict,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    将局部重写的结果应用到章节内容中
+    
+    请求体：
+    - new_text: 重写后的新内容
+    - start_position: 原文起始位置
+    - end_position: 原文结束位置
+    """
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+    
+    # 验证章节存在
+    chapter_result = await db.execute(
+        select(Chapter).where(Chapter.id == chapter_id)
+    )
+    chapter = chapter_result.scalar_one_or_none()
+    
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+    
+    # 验证用户权限
+    await verify_project_access(chapter.project_id, user_id, db)
+    
+    # 获取参数
+    new_text = apply_request.get('new_text', '')
+    start_position = apply_request.get('start_position', 0)
+    end_position = apply_request.get('end_position', 0)
+    
+    if not new_text:
+        raise HTTPException(status_code=400, detail="新内容不能为空")
+    
+    # 验证位置有效性
+    content_length = len(chapter.content)
+    if start_position < 0 or end_position > content_length or start_position >= end_position:
+        raise HTTPException(status_code=400, detail="位置参数无效")
+    
+    # 构建新内容
+    old_word_count = chapter.word_count or 0
+    new_content = chapter.content[:start_position] + new_text + chapter.content[end_position:]
+    new_word_count = len(new_content)
+    
+    # 更新章节
+    chapter.content = new_content
+    chapter.word_count = new_word_count
+    
+    # 更新项目字数
+    project_result = await db.execute(
+        select(Project).where(Project.id == chapter.project_id)
+    )
+    project = project_result.scalar_one_or_none()
+    if project:
+        project.current_words = project.current_words - old_word_count + new_word_count
+    
+    await db.commit()
+    await db.refresh(chapter)
+    
+    logger.info(f"✅ 局部重写已应用: 章节{chapter_id}, {old_word_count}字 -> {new_word_count}字")
+    
+    return {
+        "success": True,
+        "chapter_id": chapter_id,
+        "word_count": new_word_count,
+        "old_word_count": old_word_count,
+        "message": "局部重写已应用"
     }
 
