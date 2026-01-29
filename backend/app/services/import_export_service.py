@@ -13,6 +13,7 @@ from app.models.writing_style import WritingStyle
 from app.models.generation_history import GenerationHistory
 from app.models.career import Career, CharacterCareer
 from app.models.memory import StoryMemory, PlotAnalysis
+from app.models.analysis_task import AnalysisTask
 from app.models.project_default_style import ProjectDefaultStyle
 from app.schemas.import_export import (
     ProjectExportData,
@@ -832,9 +833,9 @@ class ImportExportService:
             statistics["story_memories"] = memories_count
             logger.info(f"导入故事记忆数: {memories_count}")
             
-            # 导入剧情分析
+            # 导入剧情分析（传入user_id以便创建分析任务记录）
             plot_analysis_count = await ImportExportService._import_plot_analysis(
-                new_project.id, data.get("plot_analysis", []), chapter_title_to_id, db
+                new_project.id, data.get("plot_analysis", []), chapter_title_to_id, db, user_id
             )
             statistics["plot_analysis"] = plot_analysis_count
             logger.info(f"导入剧情分析数: {plot_analysis_count}")
@@ -1260,9 +1261,12 @@ class ImportExportService:
         project_id: str,
         plot_data: List[Dict],
         chapter_mapping: Dict[str, str],
-        db: AsyncSession
+        db: AsyncSession,
+        user_id: str = None
     ) -> int:
-        """导入剧情分析"""
+        """导入剧情分析，同时创建已完成的分析任务记录"""
+        from datetime import datetime
+        
         count = 0
         for analysis_data in plot_data:
             chapter_title = analysis_data.get("chapter_title")
@@ -1309,6 +1313,21 @@ class ImportExportService:
                 description_ratio=analysis_data.get("description_ratio")
             )
             db.add(analysis)
+            
+            # 同时创建已完成的分析任务记录，这样章节管理页面会显示"已分析"状态
+            if user_id:
+                now = datetime.utcnow()
+                analysis_task = AnalysisTask(
+                    chapter_id=chapter_id,
+                    user_id=user_id,
+                    project_id=project_id,
+                    status='completed',
+                    progress=100,
+                    started_at=now,
+                    completed_at=now
+                )
+                db.add(analysis_task)
+            
             count += 1
         
         return count
