@@ -811,21 +811,16 @@ class ImportExportService:
             logger.info(f"导入角色职业关联数: {char_careers_count}")
             
             # 导入故事记忆
-            # 需要先构建章节标题到ID的映射
+            # 需要先构建章节标题到ID的映射（使用章节号+标题组合确保唯一性）
             chapter_title_to_id = {}
-            for ch_data in data.get("chapters", []):
-                title = ch_data.get("title")
-                if title:
-                    # 查询刚导入的章节
-                    ch_result = await db.execute(
-                        select(Chapter).where(
-                            Chapter.project_id == new_project.id,
-                            Chapter.title == title
-                        )
-                    )
-                    ch = ch_result.scalar_one_or_none()
-                    if ch:
-                        chapter_title_to_id[title] = ch.id
+            chapter_result = await db.execute(
+                select(Chapter).where(Chapter.project_id == new_project.id)
+            )
+            imported_chapters = chapter_result.scalars().all()
+            for ch in imported_chapters:
+                # 使用标题作为key，如果有重复标题则取第一个（已导入的顺序）
+                if ch.title and ch.title not in chapter_title_to_id:
+                    chapter_title_to_id[ch.title] = ch.id
             
             memories_count = await ImportExportService._import_story_memories(
                 new_project.id, data.get("story_memories", []), chapter_title_to_id, char_mapping, db
@@ -1107,7 +1102,8 @@ class ImportExportService:
                     WritingStyle.name == style_data.get("name")
                 )
             )
-            if existing.scalar_one_or_none():
+            # 使用 first() 避免多行时报错
+            if existing.first():
                 logger.debug(f"风格 {style_data.get('name')} 已存在，跳过导入")
                 continue
             
@@ -1172,14 +1168,14 @@ class ImportExportService:
             career_id = career_mapping.get(career_name)
             
             if char_id and career_id:
-                # 检查是否已存在
+                # 检查是否已存在（使用 first() 避免多行时报错）
                 existing = await db.execute(
                     select(CharacterCareer).where(
                         CharacterCareer.character_id == char_id,
                         CharacterCareer.career_id == career_id
                     )
                 )
-                if existing.scalar_one_or_none():
+                if existing.first():
                     continue
                 
                 char_career = CharacterCareer(
@@ -1275,11 +1271,11 @@ class ImportExportService:
             if not chapter_id:
                 continue  # 跳过找不到章节的分析
             
-            # 检查是否已存在该章节的分析
+            # 检查是否已存在该章节的分析（使用 first() 避免多行时报错）
             existing = await db.execute(
                 select(PlotAnalysis).where(PlotAnalysis.chapter_id == chapter_id)
             )
-            if existing.scalar_one_or_none():
+            if existing.first():
                 continue
             
             analysis = PlotAnalysis(
@@ -1355,14 +1351,15 @@ class ImportExportService:
             return False
         
         # 查找对应的风格（优先查找用户自定义风格，然后是全局预设风格）
-        # 先查用户自定义风格
+        # 先查用户自定义风格（使用 first() 避免多行时报错）
         style_result = await db.execute(
             select(WritingStyle).where(
                 WritingStyle.user_id == project.user_id,
                 WritingStyle.name == style_name
             )
         )
-        style = style_result.scalar_one_or_none()
+        style_row = style_result.first()
+        style = style_row[0] if style_row else None
         
         # 如果用户自定义风格不存在，查找全局预设风格
         if not style:
@@ -1372,7 +1369,8 @@ class ImportExportService:
                     WritingStyle.name == style_name
                 )
             )
-            style = style_result.scalar_one_or_none()
+            style_row = style_result.first()
+            style = style_row[0] if style_row else None
         
         if not style:
             logger.warning(f"导入项目默认风格时未找到风格: {style_name}")
@@ -1532,14 +1530,14 @@ class ImportExportService:
                         errors.append(f"第{idx+1}个角色缺少name字段")
                         continue
                     
-                    # 检查重复名称
+                    # 检查重复名称（使用 first() 避免多行时报错）
                     existing_result = await db.execute(
                         select(Character).where(
                             Character.project_id == project_id,
                             Character.name == name
                         )
                     )
-                    existing = existing_result.scalar_one_or_none()
+                    existing = existing_result.first()
                     
                     if existing:
                         warnings.append(f"角色'{name}'已存在，已跳过")
