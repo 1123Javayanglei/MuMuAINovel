@@ -414,6 +414,17 @@ class ForeshadowService:
                     fs_estimated_resolve = fs_data.get("estimated_resolve_chapter")
                     fs_keyword = fs_data.get("keyword", "")
                     
+                    # 🔧 修复Bug#7：如果AI没有填写estimated_resolve_chapter，提供合理的默认值
+                    if fs_estimated_resolve is None and fs_type == "planted":
+                        # 根据伏笔类型和长线属性计算默认回收章节
+                        if fs_is_long_term:
+                            # 长线伏笔：当前章节 + 15章
+                            fs_estimated_resolve = chapter.chapter_number + 15
+                        else:
+                            # 短线伏笔：当前章节 + 5章
+                            fs_estimated_resolve = chapter.chapter_number + 5
+                        logger.info(f"⚠️ AI未填写estimated_resolve_chapter，使用默认值: 第{fs_estimated_resolve}章")
+                    
                     # 确定状态
                     status = "planted" if (fs_type == "planted" and data.auto_set_planted) else "pending"
                     if fs_type == "resolved":
@@ -430,7 +441,7 @@ class ForeshadowService:
                         existing_foreshadow.is_long_term = fs_is_long_term
                         existing_foreshadow.related_characters = fs_related_characters if fs_related_characters else None
                         existing_foreshadow.hint_text = fs_keyword if fs_keyword else None
-                        if fs_estimated_resolve and status == "planted":
+                        if fs_estimated_resolve:
                             existing_foreshadow.target_resolve_chapter_number = fs_estimated_resolve
                         await db.flush()
                         new_foreshadows.append(existing_foreshadow.to_dict())
@@ -448,7 +459,7 @@ class ForeshadowService:
                             plant_chapter_id=chapter.id if status == "planted" else None,
                             plant_chapter_number=chapter.chapter_number if status == "planted" else None,
                             planted_at=datetime.now() if status == "planted" else None,
-                            target_resolve_chapter_number=fs_estimated_resolve if (status == "planted" and fs_estimated_resolve) else None,
+                            target_resolve_chapter_number=fs_estimated_resolve if fs_estimated_resolve else None,
                             status=status,
                             is_long_term=fs_is_long_term,
                             importance=min(fs_strength / 10.0, 1.0),
@@ -1020,7 +1031,6 @@ class ForeshadowService:
             清理统计信息
         """
         try:
-            # 查找该章节分析产生的伏笔
             query = select(Foreshadow).where(
                 and_(
                     Foreshadow.project_id == project_id,
@@ -1028,7 +1038,10 @@ class ForeshadowService:
                     or_(
                         Foreshadow.source_memory_id.like(f"analysis_%_{chapter_id}%"),
                         Foreshadow.source_memory_id.like(f"auto_analysis_{chapter_id}%"),
-                        Foreshadow.plant_chapter_id == chapter_id
+                        and_(
+                            Foreshadow.plant_chapter_id == chapter_id,
+                            Foreshadow.status.in_(["pending", "planted"])
+                        )
                     )
                 )
             )
@@ -1222,21 +1235,58 @@ class ForeshadowService:
                         elif existing:
                             logger.warning(f"⚠️ 伏笔状态不是planted，跳过回收: {existing.title} (status: {existing.status})")
                         else:
-                            # 没有找到匹配的伏笔，记录警告
                             fs_title = fs_data.get("title", fs_data.get("content", "")[:30])
-                            logger.warning(f"⚠️ 未能匹配到伏笔进行回收: {fs_title}")
-                            stats["errors"].append(f"未找到匹配的伏笔: {fs_title}")
+                            logger.warning(f"⚠️ 未能匹配到已埋入伏笔，创建新的回收记录: {fs_title}")
+                            reference_chapter = fs_data.get("reference_chapter")
+                            new_resolved_foreshadow = Foreshadow(
+                                id=str(uuid.uuid4()),
+                                project_id=project_id,
+                                title=fs_title,
+                                content=fs_data.get("content", ""),
+                                resolution_text=fs_data.get("content", ""),
+                                source_type="analysis",
+                                source_memory_id=f"auto_analysis_{chapter_id}_{fs_title[:30]}",
+                                plant_chapter_number=reference_chapter if reference_chapter else None,
+                                actual_resolve_chapter_id=chapter_id,
+                                actual_resolve_chapter_number=chapter_number,
+                                resolved_at=datetime.now(),
+                                status="resolved",
+                                is_long_term=fs_data.get("is_long_term", False),
+                                importance=min(fs_data.get("strength", 5) / 10.0, 1.0),
+                                strength=fs_data.get("strength", 5),
+                                subtlety=fs_data.get("subtlety", 5),
+                                category=fs_data.get("category"),
+                                related_characters=fs_data.get("related_characters"),
+                                auto_remind=False,
+                                include_in_context=True
+                            )
+                            db.add(new_resolved_foreshadow)
+                            await db.flush()
+                            
+                            stats["resolved_count"] += 1
+                            stats["created_count"] += 1
+                            stats["created_ids"].append(new_resolved_foreshadow.id)
+                            logger.info(f"✅ 创建新的回收伏笔记录: {fs_title} (ID: {new_resolved_foreshadow.id})")
                     
                     elif fs_type == "planted":
-                        # 【埋入伏笔】创建新的伏笔记录
                         fs_title = fs_data.get("title", "")
                         if not fs_title:
                             fs_title = fs_data.get("content", "")[:50] + "..."
                         
-                        # 生成唯一标识符，避免重复创建
-                        source_memory_id = f"auto_analysis_{chapter_id}_{fs_title[:30]}"
+                        analysis_query = select(PlotAnalysis.id).where(
+                            PlotAnalysis.chapter_id == chapter_id
+                        ).order_by(PlotAnalysis.created_at.desc()).limit(1)
+                        analysis_result = await db.execute(analysis_query)
+                        analysis_id = analysis_result.scalar_one_or_none()
                         
-                        # 检查是否已存在
+                        if not analysis_id:
+                            logger.warning(f"⚠️ 未找到章节 {chapter_id} 的分析记录，跳过伏笔创建")
+                            continue
+                        
+                        fs_index = analysis_foreshadows.index(fs_data)
+                        source_memory_id = f"analysis_{analysis_id}_{fs_index}"
+                        
+                        # 检查是否已存在（可能已经通过 sync_from_analysis 创建）
                         existing_check = await db.execute(
                             select(Foreshadow).where(
                                 and_(
@@ -1248,15 +1298,26 @@ class ForeshadowService:
                         existing_fs = existing_check.scalar_one_or_none()
                         
                         if existing_fs:
-                            # 已存在，更新信息
+                            existing_fs.title = fs_title
                             existing_fs.content = fs_data.get("content", existing_fs.content)
                             existing_fs.strength = fs_data.get("strength", existing_fs.strength)
                             existing_fs.subtlety = fs_data.get("subtlety", existing_fs.subtlety)
                             existing_fs.hint_text = fs_data.get("keyword", existing_fs.hint_text)
+                            existing_fs.target_resolve_chapter_number = fs_data.get("estimated_resolve_chapter", existing_fs.target_resolve_chapter_number)
                             await db.flush()
-                            logger.info(f"📝 更新已存在伏笔: {fs_title}")
+                            logger.info(f"📝 更新已存在伏笔（避免重复）: {fs_title}")
                         else:
-                            # 创建新伏笔
+                            # 创建新伏笔（使用统一的标识符格式）
+                            # 🔧 修复Bug#7：如果AI没有填写estimated_resolve_chapter，提供合理的默认值
+                            estimated_resolve = fs_data.get("estimated_resolve_chapter")
+                            if estimated_resolve is None:
+                                # 根据伏笔类型和长线属性计算默认回收章节
+                                if fs_data.get("is_long_term", False):
+                                    estimated_resolve = chapter_number + 15
+                                else:
+                                    estimated_resolve = chapter_number + 5
+                                logger.info(f"⚠️ AI未填写estimated_resolve_chapter，使用默认值: 第{estimated_resolve}章")
+                            
                             new_foreshadow = Foreshadow(
                                 id=str(uuid.uuid4()),
                                 project_id=project_id,
@@ -1264,11 +1325,12 @@ class ForeshadowService:
                                 content=fs_data.get("content", ""),
                                 hint_text=fs_data.get("keyword"),
                                 source_type="analysis",
-                                source_memory_id=source_memory_id,
+                                source_memory_id=source_memory_id,  # 使用统一格式
+                                source_analysis_id=analysis_id,  # 关联分析ID
                                 plant_chapter_id=chapter_id,
                                 plant_chapter_number=chapter_number,
                                 planted_at=datetime.now(),
-                                target_resolve_chapter_number=fs_data.get("estimated_resolve_chapter"),
+                                target_resolve_chapter_number=estimated_resolve,
                                 status="planted",
                                 is_long_term=fs_data.get("is_long_term", False),
                                 importance=min(fs_data.get("strength", 5) / 10.0, 1.0),
