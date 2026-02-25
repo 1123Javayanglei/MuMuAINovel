@@ -1804,7 +1804,7 @@ async def generate_chapter_content_stream(
                     # 强制关闭
                     try:
                         await db_session.close()
-                    except:
+                    except Exception:
                         pass
     
     return create_sse_response(event_generator())
