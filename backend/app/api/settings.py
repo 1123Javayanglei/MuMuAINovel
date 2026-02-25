@@ -1012,6 +1012,7 @@ async def activate_preset(
     settings.llm_model = config['llm_model']
     settings.temperature = config['temperature']
     settings.max_tokens = config['max_tokens']
+    settings.system_prompt = config.get('system_prompt')
     
     # 更新所有预设的is_active状态
     for preset in presets:
@@ -1093,7 +1094,8 @@ async def create_preset_from_current(
         api_base_url=settings.api_base_url,
         llm_model=settings.llm_model,
         temperature=settings.temperature,
-        max_tokens=settings.max_tokens
+        max_tokens=settings.max_tokens,
+        system_prompt=settings.system_prompt
     )
     
     # 创建预设

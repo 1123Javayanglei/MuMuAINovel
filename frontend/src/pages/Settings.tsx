@@ -502,6 +502,7 @@ export default function SettingsPage() {
         llm_model: values.llm_model,
         temperature: values.temperature,
         max_tokens: values.max_tokens,
+        system_prompt: values.system_prompt,
       };
 
       if (editingPreset) {
