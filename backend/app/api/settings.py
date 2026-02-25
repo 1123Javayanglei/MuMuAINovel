@@ -356,6 +356,11 @@ async def get_available_models(
             
     except httpx.HTTPStatusError as e:
         logger.error(f"获取模型列表失败 (HTTP {e.response.status_code}): {e.response.text}")
+        if e.response.status_code == 404:
+            raise HTTPException(
+                status_code=400,
+                detail=f"该 API 提供商不支持模型列表查询接口 (/models 返回 404)，请手动输入模型名称。当前请求地址: {api_base_url.rstrip('/')}/models"
+            )
         raise HTTPException(
             status_code=400,
             detail=f"无法从 API 获取模型列表 (HTTP {e.response.status_code})"

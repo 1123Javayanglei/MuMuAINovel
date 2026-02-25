@@ -22,6 +22,7 @@ export default function SettingsPage() {
   const [modelOptions, setModelOptions] = useState<Array<{ value: string; label: string; description: string }>>([]);
   const [fetchingModels, setFetchingModels] = useState(false);
   const [modelsFetched, setModelsFetched] = useState(false);
+  const [modelSearchText, setModelSearchText] = useState('');
   const [testingApi, setTestingApi] = useState(false);
   const [testResult, setTestResult] = useState<{
     success: boolean;
@@ -48,6 +49,7 @@ export default function SettingsPage() {
   const [presetModelOptions, setPresetModelOptions] = useState<Array<{ value: string; label: string; description: string }>>([]);
   const [fetchingPresetModels, setFetchingPresetModels] = useState(false);
   const [presetModelsFetched, setPresetModelsFetched] = useState(false);
+  const [presetModelSearchText, setPresetModelSearchText] = useState('');
 
   useEffect(() => {
     loadSettings();
@@ -430,6 +432,7 @@ export default function SettingsPage() {
     // 清除预设模型列表状态
     setPresetModelOptions([]);
     setPresetModelsFetched(false);
+    setPresetModelSearchText('');
   };
 
   // 预设编辑窗口：获取模型列表
@@ -1100,14 +1103,19 @@ export default function SettingsPage() {
                             <Select
                               size={isMobile ? 'middle' : 'large'}
                               showSearch
-                              placeholder={isMobile ? "选择模型" : "输入模型名称或点击获取"}
+                              placeholder={isMobile ? "输入或选择模型" : "输入模型名称或点击获取"}
                               optionFilterProp="label"
                               loading={fetchingModels}
                               onFocus={handleModelSelectFocus}
-                              filterOption={(input, option) =>
-                                (option?.label ?? '').toLowerCase().includes(input.toLowerCase()) ||
-                                (option?.description ?? '').toLowerCase().includes(input.toLowerCase())
-                              }
+                              onSearch={(value) => setModelSearchText(value)}
+                              onSelect={() => setModelSearchText('')}
+                              onBlur={() => setModelSearchText('')}
+                              filterOption={(input, option) => {
+                                // 手动输入的选项始终显示
+                                if (option?.value === input && !modelOptions.some(m => m.value === input)) return true;
+                                return (option?.label ?? '').toLowerCase().includes(input.toLowerCase()) ||
+                                  (option?.description ?? '').toLowerCase().includes(input.toLowerCase());
+                              }}
                               dropdownRender={(menu) => (
                                 <>
                                   {menu}
@@ -1116,14 +1124,14 @@ export default function SettingsPage() {
                                       <Spin size="small" /> 正在获取模型列表...
                                     </div>
                                   )}
-                                  {!fetchingModels && modelOptions.length === 0 && modelsFetched && (
+                                  {!fetchingModels && modelOptions.length === 0 && modelsFetched && !modelSearchText && (
                                     <div style={{ padding: '8px 12px', color: '#ff4d4f', textAlign: 'center', fontSize: isMobile ? '12px' : '14px' }}>
-                                      未能获取到模型列表，请检查 API 配置
+                                      未能获取到模型列表，可直接输入模型名称
                                     </div>
                                   )}
-                                  {!fetchingModels && modelOptions.length === 0 && !modelsFetched && (
+                                  {!fetchingModels && modelOptions.length === 0 && !modelsFetched && !modelSearchText && (
                                     <div style={{ padding: '8px 12px', color: 'var(--color-text-secondary)', textAlign: 'center', fontSize: isMobile ? '12px' : '14px' }}>
-                                      点击输入框自动获取模型列表
+                                      点击输入框自动获取，或直接输入模型名称
                                     </div>
                                   )}
                                 </>
@@ -1133,11 +1141,7 @@ export default function SettingsPage() {
                                   <div style={{ padding: '8px 12px', textAlign: 'center', fontSize: isMobile ? '12px' : '14px' }}>
                                     <Spin size="small" /> 加载中...
                                   </div>
-                                ) : (
-                                  <div style={{ padding: '8px 12px', color: 'var(--color-text-secondary)', textAlign: 'center', fontSize: isMobile ? '12px' : '14px' }}>
-                                    未找到匹配的模型
-                                  </div>
-                                )
+                                ) : null
                               }
                               suffixIcon={
                                 !isMobile ? (
@@ -1171,15 +1175,36 @@ export default function SettingsPage() {
                                   </div>
                                 ) : undefined
                               }
-                              options={modelOptions.map(model => ({
-                                value: model.value,
-                                label: model.label,
-                                description: model.description
-                              }))}
+                              options={(() => {
+                                const opts = modelOptions.map(model => ({
+                                  value: model.value,
+                                  label: model.label,
+                                  description: model.description
+                                }));
+                                // 如果用户输入了文本且不在已有选项中，添加手动输入选项
+                                if (modelSearchText && !modelOptions.some(m =>
+                                  m.value.toLowerCase() === modelSearchText.toLowerCase() ||
+                                  m.label.toLowerCase() === modelSearchText.toLowerCase()
+                                )) {
+                                  opts.unshift({
+                                    value: modelSearchText,
+                                    label: modelSearchText,
+                                    description: '手动输入的模型名称'
+                                  });
+                                }
+                                return opts;
+                              })()}
                               optionRender={(option) => (
                                 <div>
-                                  <div style={{ fontWeight: 500, fontSize: isMobile ? '13px' : '14px' }}>{option.data.label}</div>
-                                  {option.data.description && (
+                                  <div style={{ fontWeight: 500, fontSize: isMobile ? '13px' : '14px' }}>
+                                    {option.data.description === '手动输入的模型名称' ? (
+                                      <Space size={4}>
+                                        <EditOutlined style={{ color: 'var(--color-primary)' }} />
+                                        <span>使用 "{option.data.label}"</span>
+                                      </Space>
+                                    ) : option.data.label}
+                                  </div>
+                                  {option.data.description && option.data.description !== '手动输入的模型名称' && (
                                     <div style={{ fontSize: isMobile ? '11px' : '12px', color: '#8c8c8c', marginTop: '2px' }}>
                                       {option.data.description}
                                     </div>
@@ -1594,14 +1619,19 @@ export default function SettingsPage() {
                 >
                   <Select
                     showSearch
-                    placeholder="点击获取模型列表或直接输入"
+                    placeholder="输入模型名称或点击获取"
                     optionFilterProp="label"
                     loading={fetchingPresetModels}
                     onFocus={handlePresetModelSelectFocus}
-                    filterOption={(input, option) =>
-                      (option?.label ?? '').toLowerCase().includes(input.toLowerCase()) ||
-                      (option?.description ?? '').toLowerCase().includes(input.toLowerCase())
-                    }
+                    onSearch={(value) => setPresetModelSearchText(value)}
+                    onSelect={() => setPresetModelSearchText('')}
+                    onBlur={() => setPresetModelSearchText('')}
+                    filterOption={(input, option) => {
+                      // 手动输入的选项始终显示
+                      if (option?.value === input && !presetModelOptions.some(m => m.value === input)) return true;
+                      return (option?.label ?? '').toLowerCase().includes(input.toLowerCase()) ||
+                        (option?.description ?? '').toLowerCase().includes(input.toLowerCase());
+                    }}
                     dropdownRender={(menu) => (
                       <>
                         {menu}
@@ -1610,14 +1640,14 @@ export default function SettingsPage() {
                             <Spin size="small" /> 正在获取模型列表...
                           </div>
                         )}
-                        {!fetchingPresetModels && presetModelOptions.length === 0 && presetModelsFetched && (
+                        {!fetchingPresetModels && presetModelOptions.length === 0 && presetModelsFetched && !presetModelSearchText && (
                           <div style={{ padding: '8px 12px', color: '#ff4d4f', textAlign: 'center', fontSize: '12px' }}>
-                            未能获取到模型列表，请检查 API 配置
+                            未能获取到模型列表，可直接输入模型名称
                           </div>
                         )}
-                        {!fetchingPresetModels && presetModelOptions.length === 0 && !presetModelsFetched && (
+                        {!fetchingPresetModels && presetModelOptions.length === 0 && !presetModelsFetched && !presetModelSearchText && (
                           <div style={{ padding: '8px 12px', color: 'var(--color-text-secondary)', textAlign: 'center', fontSize: '12px' }}>
-                            点击输入框自动获取模型列表
+                            点击输入框自动获取，或直接输入模型名称
                           </div>
                         )}
                       </>
@@ -1627,11 +1657,7 @@ export default function SettingsPage() {
                         <div style={{ padding: '8px 12px', textAlign: 'center', fontSize: '12px' }}>
                           <Spin size="small" /> 加载中...
                         </div>
-                      ) : (
-                        <div style={{ padding: '8px 12px', color: 'var(--color-text-secondary)', textAlign: 'center', fontSize: '12px' }}>
-                          未找到匹配的模型
-                        </div>
-                      )
+                      ) : null
                     }
                     suffixIcon={
                       <div
@@ -1663,15 +1689,36 @@ export default function SettingsPage() {
                         </Button>
                       </div>
                     }
-                    options={presetModelOptions.map(model => ({
-                      value: model.value,
-                      label: model.label,
-                      description: model.description
-                    }))}
+                    options={(() => {
+                      const opts = presetModelOptions.map(model => ({
+                        value: model.value,
+                        label: model.label,
+                        description: model.description
+                      }));
+                      // 如果用户输入了文本且不在已有选项中，添加手动输入选项
+                      if (presetModelSearchText && !presetModelOptions.some(m =>
+                        m.value.toLowerCase() === presetModelSearchText.toLowerCase() ||
+                        m.label.toLowerCase() === presetModelSearchText.toLowerCase()
+                      )) {
+                        opts.unshift({
+                          value: presetModelSearchText,
+                          label: presetModelSearchText,
+                          description: '手动输入的模型名称'
+                        });
+                      }
+                      return opts;
+                    })()}
                     optionRender={(option) => (
                       <div>
-                        <div style={{ fontWeight: 500, fontSize: '13px' }}>{option.data.label}</div>
-                        {option.data.description && (
+                        <div style={{ fontWeight: 500, fontSize: '13px' }}>
+                          {option.data.description === '手动输入的模型名称' ? (
+                            <Space size={4}>
+                              <EditOutlined style={{ color: 'var(--color-primary)' }} />
+                              <span>使用 "{option.data.label}"</span>
+                            </Space>
+                          ) : option.data.label}
+                        </div>
+                        {option.data.description && option.data.description !== '手动输入的模型名称' && (
                           <div style={{ fontSize: '11px', color: '#8c8c8c', marginTop: '2px' }}>
                             {option.data.description}
                           </div>
