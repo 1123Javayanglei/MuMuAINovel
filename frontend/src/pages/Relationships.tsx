@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
-import { Card, Table, Tag, Button, Space, message, Modal, Form, Select, Slider, Input, Tabs, AutoComplete } from 'antd';
+import { Card, Table, Tag, Button, Space, message, Modal, Form, Select, Slider, Input, Tabs, AutoComplete, Descriptions, Divider } from 'antd';
 import { PlusOutlined, ApartmentOutlined, UserOutlined, EditOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import axios from 'axios';
@@ -64,6 +64,27 @@ interface GraphData {
   links: GraphLink[];
 }
 
+interface CharacterDetail {
+  project_id: string;
+  name: string;
+  age: string;
+  gender: string;
+  is_organization: boolean;
+  role_type: string;
+  personality: string;
+  background: string;
+  appearance: string;
+  organization_type: string;
+  organization_purpose: string;
+  organization_members: string;
+  traits: string;
+  avatar_url: string;
+  power_level: number;
+  location: string;
+  motto: string;
+  color: string;
+}
+
 export default function Relationships() {
   const { projectId } = useParams<{ projectId: string }>();
   const { currentProject } = useStore();
@@ -81,6 +102,9 @@ export default function Relationships() {
   const [currentPage, setCurrentPage] = useState(1);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [nodeDetail, setNodeDetail] = useState<CharacterDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -129,19 +153,40 @@ export default function Relationships() {
       const data = res.data as GraphData;
 
       // 转换为 React Flow 的节点和边
-      const flowNodes: Node[] = data.nodes.map((node, index) => ({
-        id: node.id,
-        type: 'default',
-        position: {
-          x: 100 + (index % 4) * 200,
-          y: 100 + Math.floor(index / 4) * 150,
-        },
-        data: {
-          label: node.name,
-          type: node.type,
-          role_type: node.role_type,
-        },
-      }));
+      const getNodeColors = (type: string, roleType: string) => {
+        // 人物颜色
+        if (type === 'character') {
+          if (roleType === 'protagonist') return { border: '#f5222d', bg: '#f5222d' };
+          if (roleType === 'antagonist') return { border: '#cf1322', bg: '#cf1322' };
+          return { border: '#1890ff', bg: '#1890ff' };
+        }
+        // 组织颜色
+        return { border: '#52c41a', bg: '#52c41a' };
+      };
+
+      const flowNodes: Node[] = data.nodes.map((node, index) => {
+        const colors = getNodeColors(node.type, node.role_type);
+        return {
+          id: node.id,
+          type: 'default',
+          position: {
+            x: 100 + (index % 4) * 200,
+            y: 100 + Math.floor(index / 4) * 150,
+          },
+          data: {
+            label: node.name,
+            type: node.type,
+            role_type: node.role_type,
+          },
+          style: {
+            border: `2px solid ${colors.border}`,
+            borderRadius: 8,
+            backgroundColor: `${colors.bg}33`, // 20% 透明度
+            padding: '10px 15px',
+            minWidth: 100,
+          },
+        };
+      });
 
       const flowEdges: Edge[] = data.links.map(link => ({
         id: `${link.source}-${link.target}`,
@@ -180,6 +225,44 @@ export default function Relationships() {
     } finally {
       setGraphLoading(false);
     }
+  };
+
+  const loadNodeDetail = async (nodeId: string) => {
+    if (!projectId) return;
+    setDetailLoading(true);
+    try {
+      const res = await axios.get(`/api/characters?project_id=${projectId}`);
+      const characters = res.data.items || [];
+      // 通过 id 查找角色
+      const character = characters.find((c: { id: string }) => c.id === nodeId);
+      if (character) {
+        setNodeDetail(character);
+      } else {
+        // 如果没找到，尝试通过 name 查找
+        const nodeLabel = nodes.find(n => n.id === nodeId)?.data.label;
+        const characterByName = characters.find((c: { name: string }) => c.name === nodeLabel);
+        if (characterByName) {
+          setNodeDetail(characterByName);
+        } else {
+          message.error('未找到该角色详细信息');
+        }
+      }
+    } catch (error) {
+      message.error('加载角色详情失败');
+      console.error(error);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const handleNodeClick = (_: unknown, node: { id: string }) => {
+    setSelectedNodeId(node.id);
+    loadNodeDetail(node.id);
+  };
+
+  const handleCloseDetail = () => {
+    setSelectedNodeId(null);
+    setNodeDetail(null);
   };
 
   const handleCreateRelationship = async (values: {
@@ -542,6 +625,7 @@ export default function Relationships() {
                           edges={edges}
                           onNodesChange={onNodesChange}
                           onEdgesChange={onEdgesChange}
+                          onNodeClick={handleNodeClick}
                           fitView
                           fitViewOptions={{ padding: 0.2 }}
                           attributionPosition="bottom-left"
@@ -690,6 +774,136 @@ export default function Relationships() {
             </Space>
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* 节点详情 Modal */}
+      <Modal
+        title={nodeDetail?.is_organization ? '组织详情' : '角色详情'}
+        open={!!selectedNodeId}
+        onCancel={handleCloseDetail}
+        footer={[
+          <Button key="close" onClick={handleCloseDetail}>
+            关闭
+          </Button>
+        ]}
+        width={isMobile ? '100%' : 700}
+        loading={detailLoading}
+      >
+        {nodeDetail && (
+          <>
+            <div style={{ textAlign: 'center', marginBottom: 16 }}>
+              {nodeDetail.avatar_url ? (
+                <img
+                  src={nodeDetail.avatar_url}
+                  alt={nodeDetail.name}
+                  style={{ width: 80, height: 80, borderRadius: '50%', objectFit: 'cover' }}
+                />
+              ) : (
+                <div style={{
+                  width: 80,
+                  height: 80,
+                  borderRadius: '50%',
+                  backgroundColor: nodeDetail.color || '#1890ff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  margin: '0 auto',
+                  fontSize: 32,
+                  color: '#fff'
+                }}>
+                  {nodeDetail.is_organization ? '🏛️' : '👤'}
+                </div>
+              )}
+              <h2 style={{ marginTop: 8, marginBottom: 4 }}>{nodeDetail.name}</h2>
+              <Space>
+                <Tag color={nodeDetail.is_organization ? 'green' : 'blue'}>
+                  {nodeDetail.is_organization ? '组织' : '角色'}
+                </Tag>
+                <Tag color={
+                  nodeDetail.role_type === 'protagonist' ? 'red' :
+                  nodeDetail.role_type === 'antagonist' ? 'orange' : 'blue'
+                }>
+                  {nodeDetail.role_type === 'protagonist' ? '主角' :
+                   nodeDetail.role_type === 'antagonist' ? '反派' : '配角'}
+                </Tag>
+                {nodeDetail.gender && <Tag>{nodeDetail.gender}</Tag>}
+                {nodeDetail.age && <Tag>{nodeDetail.age}岁</Tag>}
+              </Space>
+            </div>
+
+            <Divider />
+
+            {!nodeDetail.is_organization ? (
+              // 角色详情
+              <>
+                {nodeDetail.appearance && (
+                  <Descriptions column={1} size="small" bordered labelStyle={{ minWidth: 100 }}>
+                    <Descriptions.Item label="外貌特征">{nodeDetail.appearance}</Descriptions.Item>
+                  </Descriptions>
+                )}
+                {nodeDetail.personality && (
+                  <Descriptions column={1} size="small" bordered labelStyle={{ minWidth: 100 }} style={{ marginTop: 8 }}>
+                    <Descriptions.Item label="性格特点">{nodeDetail.personality}</Descriptions.Item>
+                  </Descriptions>
+                )}
+                {nodeDetail.background && (
+                  <Descriptions column={1} size="small" bordered labelStyle={{ minWidth: 100 }} style={{ marginTop: 8 }}>
+                    <Descriptions.Item label="背景故事">{nodeDetail.background}</Descriptions.Item>
+                  </Descriptions>
+                )}
+                {nodeDetail.traits && (
+                  <div style={{ marginTop: 8 }}>
+                    <strong>特征标签：</strong>
+                    <div style={{ marginTop: 4 }}>
+                      {JSON.parse(nodeDetail.traits).map((trait: string, index: number) => (
+                        <Tag key={index} color="blue">{trait}</Tag>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              // 组织详情
+              <>
+                {nodeDetail.organization_type && (
+                  <Descriptions column={1} size="small" bordered labelStyle={{ minWidth: 100 }}>
+                    <Descriptions.Item label="组织类型">{nodeDetail.organization_type}</Descriptions.Item>
+                  </Descriptions>
+                )}
+                {nodeDetail.organization_purpose && (
+                  <Descriptions column={1} size="small" bordered labelStyle={{ minWidth: 100 }} style={{ marginTop: 8 }}>
+                    <Descriptions.Item label="组织目的">{nodeDetail.organization_purpose}</Descriptions.Item>
+                  </Descriptions>
+                )}
+                {nodeDetail.location && (
+                  <Descriptions column={1} size="small" bordered labelStyle={{ minWidth: 100 }} style={{ marginTop: 8 }}>
+                    <Descriptions.Item label="所在地">{nodeDetail.location}</Descriptions.Item>
+                  </Descriptions>
+                )}
+                {nodeDetail.motto && (
+                  <Descriptions column={1} size="small" bordered labelStyle={{ minWidth: 100 }} style={{ marginTop: 8 }}>
+                    <Descriptions.Item label="组织格言">{nodeDetail.motto}</Descriptions.Item>
+                  </Descriptions>
+                )}
+                {nodeDetail.power_level !== undefined && (
+                  <Descriptions column={1} size="small" bordered labelStyle={{ minWidth: 100 }} style={{ marginTop: 8 }}>
+                    <Descriptions.Item label="势力等级">{nodeDetail.power_level}/100</Descriptions.Item>
+                  </Descriptions>
+                )}
+                {nodeDetail.organization_members && (
+                  <div style={{ marginTop: 8 }}>
+                    <strong>组织成员：</strong>
+                    <div style={{ marginTop: 4 }}>
+                      {JSON.parse(nodeDetail.organization_members).map((member: string, index: number) => (
+                        <Tag key={index} color="green">{member}</Tag>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </>
+        )}
       </Modal>
       </div>
     </>
