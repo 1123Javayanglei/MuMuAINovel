@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
-import { Card, Table, Tag, Button, Space, message, Modal, Form, Select, Slider, Input, Tabs, AutoComplete, Descriptions, Divider } from 'antd';
+import { useParams, useNavigate } from 'react-router-dom';
+import { Card, Table, Tag, Button, Space, message, Modal, Form, Select, Slider, Input, Tabs, AutoComplete } from 'antd';
 import { PlusOutlined, ApartmentOutlined, UserOutlined, EditOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import axios from 'axios';
@@ -35,6 +35,7 @@ interface Character {
 export default function Relationships() {
   const { projectId } = useParams<{ projectId: string }>();
   const { currentProject } = useStore();
+  const navigate = useNavigate();
   const [relationships, setRelationships] = useState<Relationship[]>([]);
   const [relationshipTypes, setRelationshipTypes] = useState<RelationshipType[]>([]);
   const [characters, setCharacters] = useState<Character[]>([]);
@@ -320,7 +321,7 @@ export default function Relationships() {
         extra={
           <Space>
             <Button
-              onClick={() => window.open(`/project/${projectId}/relationships-graph`, '_blank')}
+              onClick={() => projectId && navigate(`/project/${projectId}/relationships-graph`)}
               size={isMobile ? 'small' : 'middle'}
             >
               关系图谱

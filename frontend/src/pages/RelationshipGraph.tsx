@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Card, Tag, Button, Space, message } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import axios from 'axios';
@@ -102,28 +102,22 @@ interface CharacterDetail {
 
 export default function RelationshipGraph() {
   const { projectId } = useParams<{ projectId: string }>();
-  const [graphData, setGraphData] = useState<GraphData | null>(null);
-  const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
+  const [, setGraphData] = useState<GraphData | null>(null);
+  const [, setLoading] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [nodeDetail, setNodeDetail] = useState<CharacterDetail | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
+  const [, setDetailLoading] = useState(false);
   const [relationshipTypes, setRelationshipTypes] = useState<RelationshipType[]>([]);
 
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
   useEffect(() => {
     if (projectId) {
       loadRelationshipTypes();
     }
   }, [projectId]);
-
-  // 当 relationshipTypes 加载完成后再加载图数据
-  useEffect(() => {
-    if (projectId && relationshipTypes.length > 0) {
-      loadGraphData();
-    }
-  }, [projectId, relationshipTypes]);
 
   const loadRelationshipTypes = async () => {
     try {
@@ -135,7 +129,7 @@ export default function RelationshipGraph() {
   };
 
   // 根据关系名称获取分类颜色
-  const getCategoryColor = (relationshipName: string, isActive: boolean) => {
+  const getCategoryColor = useCallback((relationshipName: string, isActive: boolean) => {
     // 找到对应的关系类型
     const relType = relationshipTypes.find(rt => rt.name === relationshipName);
     const category = relType?.category || 'default';
@@ -151,10 +145,10 @@ export default function RelationshipGraph() {
 
     const colors = categoryColors[category] || categoryColors.default;
     return isActive ? colors.active : colors.inactive;
-  };
+  }, [relationshipTypes]);
 
-  const loadGraphData = async () => {
-    if (!projectId) return;
+  const loadGraphData = useCallback(async () => {
+    if (!projectId || relationshipTypes.length === 0) return;
     setLoading(true);
     try {
       const res = await axios.get(`/api/relationships/graph/${projectId}`);
@@ -234,7 +228,12 @@ export default function RelationshipGraph() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [projectId, relationshipTypes, getCategoryColor, setNodes, setEdges]);
+
+  // 当 relationshipTypes 加载完成后再加载图数据
+  useEffect(() => {
+    void loadGraphData();
+  }, [loadGraphData]);
 
   const loadNodeDetail = async (nodeId: string) => {
     if (!projectId) return;
@@ -267,7 +266,11 @@ export default function RelationshipGraph() {
   };
 
   const goBack = () => {
-    window.close();
+    if (projectId) {
+      navigate(`/project/${projectId}/relationships`);
+      return;
+    }
+    navigate('/projects');
   };
 
   return (
