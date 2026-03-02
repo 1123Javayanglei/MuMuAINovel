@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { Card, Table, Tag, Button, Space, message, Modal, Form, Select, Slider, Input, Tabs, AutoComplete } from 'antd';
+import { Card, Table, Tag, Button, Space, message, Modal, Form, Select, Slider, Input, Tabs, AutoComplete, Descriptions, Divider } from 'antd';
 import { PlusOutlined, ApartmentOutlined, UserOutlined, EditOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import axios from 'axios';
@@ -72,7 +72,7 @@ export default function Relationships() {
         axios.get('/api/relationships/types'),
         axios.get(`/api/characters?project_id=${projectId}`)
       ]);
-      
+
       setRelationships(relsRes.data);
       setRelationshipTypes(typesRes.data);
       setCharacters(charsRes.data.items || []);
@@ -130,7 +130,7 @@ export default function Relationships() {
     description?: string;
   }) => {
     if (!editingRelationship) return;
-    
+
     try {
       await axios.put(`/api/relationships/${editingRelationship.id}`, {
         relationship_name: values.relationship_name,
@@ -318,14 +318,22 @@ export default function Relationships() {
           </Space>
         }
         extra={
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => setIsModalOpen(true)}
-            size={isMobile ? 'small' : 'middle'}
-          >
-            {isMobile ? '添加' : '添加关系'}
-          </Button>
+          <Space>
+            <Button
+              onClick={() => window.open(`/project/${projectId}/relationships-graph`, '_blank')}
+              size={isMobile ? 'small' : 'middle'}
+            >
+              关系图谱
+            </Button>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => setIsModalOpen(true)}
+              size={isMobile ? 'small' : 'middle'}
+            >
+              {isMobile ? '添加' : '添加关系'}
+            </Button>
+          </Space>
         }
       >
         <Tabs
@@ -352,7 +360,7 @@ export default function Relationships() {
                       setCurrentPage(page);
                       if (size !== pageSize) {
                         setPageSize(size);
-                        setCurrentPage(1); // 切换每页条数时重置到第一页
+                        setCurrentPage(1);
                       }
                     },
                     onShowSizeChange: (_, size) => {
