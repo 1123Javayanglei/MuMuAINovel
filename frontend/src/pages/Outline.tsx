@@ -1,5 +1,5 @@
-﻿import { useState, useEffect } from 'react';
-import { Button, List, Modal, Form, Input, message, Empty, Space, Popconfirm, Card, Select, Radio, Tag, InputNumber, Tabs } from 'antd';
+﻿import { useState, useEffect, useMemo } from 'react';
+import { Button, List, Modal, Form, Input, message, Empty, Space, Popconfirm, Card, Select, Radio, Tag, InputNumber, Tabs, Pagination } from 'antd';
 import { EditOutlined, DeleteOutlined, ThunderboltOutlined, BranchesOutlined, AppstoreAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, PlusOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { useOutlineSync } from '../store/hooks';
@@ -78,6 +78,33 @@ function getOrganizationNames(entries: CharacterEntry[]): string[] {
   return entries.filter(e => e.type === 'organization').map(e => e.name);
 }
 
+interface OutlineStructureData {
+  key_events?: string[];
+  key_points?: string[];
+  characters_involved?: string[];
+  characters?: unknown[];
+  scenes?: string[] | Array<{
+    location: string;
+    characters: string[];
+    purpose: string;
+  }>;
+  emotion?: string;
+  goal?: string;
+  title?: string;
+  summary?: string;
+  content?: string;
+}
+
+function parseOutlineStructure(structure?: string): OutlineStructureData {
+  if (!structure) return {};
+  try {
+    return JSON.parse(structure) as OutlineStructureData;
+  } catch (e) {
+    console.error('解析structure失败:', e);
+    return {};
+  }
+}
+
 const { TextArea } = Input;
 
 export default function Outline() {
@@ -93,9 +120,6 @@ export default function Outline() {
   const [isExpanding, setIsExpanding] = useState(false);
   const [projectCharacters, setProjectCharacters] = useState<Array<{ label: string; value: string }>>([]);
 
-  // ✅ 新增：记录每个大纲的展开状态
-  const [outlineExpandStatus, setOutlineExpandStatus] = useState<Record<string, boolean>>({});
-  
   // ✅ 新增：记录场景区域的展开/折叠状态
   const [scenesExpandStatus, setScenesExpandStatus] = useState<Record<string, boolean>>({});
 
@@ -121,6 +145,11 @@ export default function Outline() {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  // 大纲查询与分页状态
+  const [outlineSearchKeyword, setOutlineSearchKeyword] = useState('');
+  const [outlinePage, setOutlinePage] = useState(1);
+  const [outlinePageSize, setOutlinePageSize] = useState(20);
 
   // 使用同步 hooks
   const {
@@ -155,25 +184,22 @@ export default function Outline() {
     }
   };
 
-  // ✅ 新增：加载所有大纲的展开状态
-  useEffect(() => {
-    const loadExpandStatus = async () => {
-      if (outlines.length === 0) return;
+  // 从后端返回字段直接构建展开状态，避免前端 N+1 请求
+  const outlineExpandStatus = useMemo(() => {
+    const statusMap: Record<string, boolean> = {};
+    outlines.forEach((outline) => {
+      statusMap[outline.id] = Boolean(outline.has_chapters);
+    });
+    return statusMap;
+  }, [outlines]);
 
-      const statusMap: Record<string, boolean> = {};
-      for (const outline of outlines) {
-        try {
-          const chapters = await outlineApi.getOutlineChapters(outline.id);
-          statusMap[outline.id] = chapters.has_chapters;
-        } catch (error) {
-          console.error(`加载大纲 ${outline.id} 状态失败:`, error);
-          statusMap[outline.id] = false;
-        }
-      }
-      setOutlineExpandStatus(statusMap);
-    };
-
-    loadExpandStatus();
+  // 统一预解析 structure，避免 render 阶段重复 JSON.parse
+  const outlineStructureMap = useMemo(() => {
+    const parsedMap: Record<string, OutlineStructureData> = {};
+    outlines.forEach((outline) => {
+      parsedMap[outline.id] = parseOutlineStructure(outline.structure);
+    });
+    return parsedMap;
   }, [outlines]);
 
   // 当角色确认数据变化时，初始化选中状态（默认全选）
@@ -181,34 +207,48 @@ export default function Outline() {
   // 移除事件监听，避免无限循环
   // Hook 内部已经更新了 store，不需要再次刷新
 
-  if (!currentProject) return null;
-
   // 确保大纲按 order_index 排序
   const sortedOutlines = [...outlines].sort((a, b) => a.order_index - b.order_index);
+
+  // 前端查询过滤
+  const filteredOutlines = useMemo(() => {
+    const keyword = outlineSearchKeyword.trim().toLowerCase();
+    if (!keyword) return sortedOutlines;
+
+    return sortedOutlines.filter((outline) => {
+      return (
+        String(outline.order_index).includes(keyword) ||
+        outline.title.toLowerCase().includes(keyword) ||
+        outline.content.toLowerCase().includes(keyword)
+      );
+    });
+  }, [sortedOutlines, outlineSearchKeyword]);
+
+  // 当前分页数据
+  const pagedOutlines = useMemo(() => {
+    const start = (outlinePage - 1) * outlinePageSize;
+    return filteredOutlines.slice(start, start + outlinePageSize);
+  }, [filteredOutlines, outlinePage, outlinePageSize]);
+
+  // 搜索词或页大小变化时，回到第一页
+  useEffect(() => {
+    setOutlinePage(1);
+  }, [outlineSearchKeyword, outlinePageSize]);
+
+  // 数据变化导致页码越界时自动纠正
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(filteredOutlines.length / outlinePageSize));
+    if (outlinePage > maxPage) {
+      setOutlinePage(maxPage);
+    }
+  }, [filteredOutlines.length, outlinePage, outlinePageSize]);
+
+  if (!currentProject) return null;
 
   const handleOpenEditModal = (id: string) => {
     const outline = outlines.find(o => o.id === id);
     if (outline) {
-      // 解析structure数据
-      let structureData: {
-        characters?: unknown[];  // 兼容新旧格式
-        scenes?: string[] | Array<{
-          location: string;
-          characters: string[];
-          purpose: string;
-        }>;
-        key_points?: string[];
-        emotion?: string;
-        goal?: string;
-      } = {};
-      
-      if (outline.structure) {
-        try {
-          structureData = JSON.parse(outline.structure);
-        } catch (e) {
-          console.error('解析structure失败:', e);
-        }
-      }
+      const structureData = outlineStructureMap[outline.id] || {};
       
       // 解析角色/组织条目（兼容新旧格式）
       const editEntries = parseCharacterEntries(structureData.characters);
@@ -357,8 +397,8 @@ export default function Outline() {
         onOk: async () => {
           const values = await editForm.validateFields();
           try {
-            // 解析并重构structure数据
-            const originalStructure = outline.structure ? JSON.parse(outline.structure) : {};
+            // 解析并重构structure数据（使用预解析缓存，避免重复 JSON.parse）
+            const originalStructure = outlineStructureMap[outline.id] || {};
             
             // 处理角色和组织数据 - 合并为带类型标识的新格式
             const charNames = Array.isArray(values.characters)
@@ -1059,18 +1099,6 @@ export default function Outline() {
         const updatedProject = await projectApi.getProject(currentProject.id);
         setCurrentProject(updatedProject);
       }
-      // 更新展开状态
-      setOutlineExpandStatus(prev => {
-        const newStatus = { ...prev };
-        // 找到被删除章节对应的大纲ID并更新其状态
-        const outlineId = Object.keys(newStatus).find(id =>
-          outlines.find(o => o.id === id && o.title === outlineTitle)
-        );
-        if (outlineId) {
-          newStatus[outlineId] = false;
-        }
-        return newStatus;
-      });
     } catch (error: unknown) {
       const apiError = error as ApiError;
       message.error(apiError.response?.data?.detail || '删除章节失败');
@@ -1901,6 +1929,13 @@ export default function Outline() {
             )}
           </div>
           <Space size="small" wrap={isMobile}>
+            <Input.Search
+              allowClear
+              placeholder="搜索大纲（序号/标题/内容）"
+              value={outlineSearchKeyword}
+              onChange={(e) => setOutlineSearchKeyword(e.target.value)}
+              style={{ width: isMobile ? '100%' : 280 }}
+            />
             <Button
               icon={<PlusOutlined />}
               onClick={showManualCreateOutlineModal}
@@ -1935,33 +1970,14 @@ export default function Outline() {
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {outlines.length === 0 ? (
             <Empty description="还没有大纲，开始创建吧！" />
+          ) : filteredOutlines.length === 0 ? (
+            <Empty description="未找到匹配大纲" />
           ) : (
             <List
-              dataSource={sortedOutlines}
+              dataSource={pagedOutlines}
               renderItem={(item) => {
-                  // 解析structure字段获取所有信息
-                  let structureData: {
-                    key_events?: string[];
-                    key_points?: string[];  // AI生成的情节要点
-                    characters_involved?: string[];
-                    characters?: unknown[];  // 兼容新旧格式
-                    scenes?: string[] | Array<{
-                      location: string;
-                      characters: string[];
-                      purpose: string;
-                    }>;
-                    emotion?: string;  // AI生成的情感基调
-                    goal?: string;  // AI生成的叙事目标
-                  } = {};
-                  
-                  if (item.structure) {
-                    try {
-                      structureData = JSON.parse(item.structure);
-                    } catch (e) {
-                      console.error('解析structure失败:', e);
-                    }
-                  }
-                  
+                  const structureData = outlineStructureMap[item.id] || {};
+
                   // 解析角色/组织条目（兼容新旧格式）
                   const characterEntries = parseCharacterEntries(structureData.characters);
                   const characterNames = getCharacterNames(characterEntries);
@@ -2703,7 +2719,41 @@ export default function Outline() {
                 }}
               />
           )}
+
         </div>
+
+        {/* 固定底部分页栏 */}
+        {outlines.length > 0 && (
+          <div
+            style={{
+              position: 'sticky',
+              bottom: 0,
+              zIndex: 10,
+              backgroundColor: 'var(--color-bg-container)',
+              borderTop: '1px solid #f0f0f0',
+              padding: isMobile ? '8px 0' : '10px 0',
+              display: 'flex',
+              justifyContent: 'flex-end'
+            }}
+          >
+            <Pagination
+              current={outlinePage}
+              pageSize={outlinePageSize}
+              total={filteredOutlines.length}
+              showSizeChanger
+              pageSizeOptions={['10', '20', '50', '100']}
+              onChange={(page, size) => {
+                setOutlinePage(page);
+                if (size !== outlinePageSize) {
+                  setOutlinePageSize(size);
+                  setOutlinePage(1);
+                }
+              }}
+              showTotal={(total) => `共 ${total} 条`}
+              size={isMobile ? 'small' : 'default'}
+            />
+          </div>
+        )}
       </div>
     </>
   );
