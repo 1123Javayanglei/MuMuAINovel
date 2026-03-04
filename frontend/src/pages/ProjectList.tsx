@@ -13,6 +13,7 @@ import ChangelogFloatingButton from '../components/ChangelogFloatingButton';
 import SettingsPage from './Settings';
 import MCPPluginsPage from './MCPPlugins';
 import PromptTemplates from './PromptTemplates';
+import BookImport from './BookImport';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -39,7 +40,7 @@ const formatWordCount = (count: number): string => {
 export default function ProjectList() {
   const navigate = useNavigate();
   const { projects, loading } = useStore();
-  const [activeView, setActiveView] = useState<'projects' | 'settings' | 'mcp' | 'prompts'>('projects');
+  const [activeView, setActiveView] = useState<'projects' | 'settings' | 'mcp' | 'prompts' | 'book-import'>('projects');
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [modal, contextHolder] = Modal.useModal();
   const [showApiTip, setShowApiTip] = useState(true);
@@ -400,27 +401,27 @@ export default function ProjectList() {
 
                 <div style={{ padding: '0 12px', fontSize: 12, color: 'rgba(0,0,0,0.45)', marginBottom: 8, marginTop: 16 }}>创作工具</div>
                 <div
-                  onClick={() => setActiveView('prompts')}
+                  onClick={() => setActiveView('book-import')}
                   style={{
                     padding: '10px 16px',
                     fontSize: 14,
                     cursor: 'pointer',
                     borderRadius: 4,
-                    color: activeView === 'prompts' ? 'var(--color-primary)' : 'rgba(0,0,0,0.85)',
-                    background: activeView === 'prompts' ? '#e6f7ff' : 'transparent',
+                    color: activeView === 'book-import' ? 'var(--color-primary)' : 'rgba(0,0,0,0.85)',
+                    background: activeView === 'book-import' ? '#e6f7ff' : 'transparent',
                     fontWeight: 500,
                     display: 'flex',
                     alignItems: 'center',
                     gap: 10,
                     transition: 'all 0.3s',
                     marginBottom: 4,
-                    borderRight: activeView === 'prompts' ? '3px solid var(--color-primary)' : '3px solid transparent'
+                    borderRight: activeView === 'book-import' ? '3px solid var(--color-primary)' : '3px solid transparent'
                   }}
-                  onMouseEnter={e => activeView !== 'prompts' && (e.currentTarget.style.background = 'rgba(0,0,0,0.04)')}
-                  onMouseLeave={e => activeView !== 'prompts' && (e.currentTarget.style.background = 'transparent')}
+                  onMouseEnter={e => activeView !== 'book-import' && (e.currentTarget.style.background = 'rgba(0,0,0,0.04)')}
+                  onMouseLeave={e => activeView !== 'book-import' && (e.currentTarget.style.background = 'transparent')}
                 >
-                   <FileSearchOutlined />
-                   提示词管理
+                   <UploadOutlined />
+                   拆书导入
                 </div>
                 <div
                   onClick={() => setActiveView('mcp')}
@@ -444,6 +445,29 @@ export default function ProjectList() {
                 >
                    <ApiOutlined />
                    MCP 插件
+                </div>
+                <div
+                  onClick={() => setActiveView('prompts')}
+                  style={{
+                    padding: '10px 16px',
+                    fontSize: 14,
+                    cursor: 'pointer',
+                    borderRadius: 4,
+                    color: activeView === 'prompts' ? 'var(--color-primary)' : 'rgba(0,0,0,0.85)',
+                    background: activeView === 'prompts' ? '#e6f7ff' : 'transparent',
+                    fontWeight: 500,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    transition: 'all 0.3s',
+                    marginBottom: 4,
+                    borderRight: activeView === 'prompts' ? '3px solid var(--color-primary)' : '3px solid transparent'
+                  }}
+                  onMouseEnter={e => activeView !== 'prompts' && (e.currentTarget.style.background = 'rgba(0,0,0,0.04)')}
+                  onMouseLeave={e => activeView !== 'prompts' && (e.currentTarget.style.background = 'transparent')}
+                >
+                   <FileSearchOutlined />
+                   提示词管理
                 </div>
 
                 <div style={{ padding: '0 12px', fontSize: 12, color: 'rgba(0,0,0,0.45)', marginBottom: 8, marginTop: 16 }}>系统设置</div>
@@ -530,6 +554,7 @@ export default function ProjectList() {
              }}>
                {activeView === 'projects' ? '我的书架' :
                 activeView === 'prompts' ? '提示词模板' :
+                activeView === 'book-import' ? '拆书导入' :
                 activeView === 'mcp' ? 'MCP 插件' : 'API 设置'}
              </span>
           </div>
@@ -577,7 +602,7 @@ export default function ProjectList() {
                 selectedKeys={[activeView]}
                 style={{ borderRight: 0, paddingTop: 8 }}
                 onClick={({ key }) => {
-                  setActiveView(key as 'projects' | 'settings' | 'mcp' | 'prompts');
+                  setActiveView(key as 'projects' | 'settings' | 'mcp' | 'prompts' | 'book-import');
                   setDrawerVisible(false);
                 }}
                 items={[
@@ -591,14 +616,19 @@ export default function ProjectList() {
                     label: '创作工具',
                     children: [
                       {
-                        key: 'prompts',
-                        icon: <FileSearchOutlined />,
-                        label: '提示词管理',
+                        key: 'book-import',
+                        icon: <UploadOutlined />,
+                        label: '拆书导入',
                       },
                       {
                         key: 'mcp',
                         icon: <ApiOutlined />,
                         label: 'MCP 插件',
+                      },
+                      {
+                        key: 'prompts',
+                        icon: <FileSearchOutlined />,
+                        label: '提示词管理',
                       },
                     ],
                   },
@@ -676,6 +706,7 @@ export default function ProjectList() {
              }}>
                 {activeView === 'projects' ? '我的书架' :
                  activeView === 'prompts' ? '提示词模板' :
+                 activeView === 'book-import' ? '拆书导入' :
                  activeView === 'mcp' ? 'MCP 插件' : 'API 设置'}
              </h2>
              
@@ -743,13 +774,21 @@ export default function ProjectList() {
           style={{
             flex: 1,
             overflowY: 'auto',
-            padding: activeView === 'projects' ? `${isMobile ? 16 : 24}px ${isMobile ? 16 : 32}px` : 0,
+            padding: (activeView === 'projects' || activeView === 'book-import')
+              ? `${isMobile ? 16 : 24}px ${isMobile ? 16 : 32}px`
+              : 0,
             background: 'var(--color-bg-base)',
           }}
         >
           {activeView === 'settings' && <SettingsPage />}
           {activeView === 'mcp' && <MCPPluginsPage />}
           {activeView === 'prompts' && <PromptTemplates />}
+          
+          {activeView === 'book-import' && (
+            <div style={{ maxWidth: 1200, margin: '0 auto', paddingBottom: 60 }}>
+              <BookImport />
+            </div>
+          )}
           
           {activeView === 'projects' && (
             <div style={{ maxWidth: 1600, margin: '0 auto', paddingBottom: 60 }}>
