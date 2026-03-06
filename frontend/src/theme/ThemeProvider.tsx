@@ -1,6 +1,6 @@
 import { ConfigProvider } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PropsWithChildren } from 'react';
 import { getThemeConfig, type ResolvedThemeMode } from './themeConfig';
 import { ThemeModeContext } from './themeContext';
@@ -61,7 +61,7 @@ export const ThemeProvider = ({ children }: PropsWithChildren) => {
   const resolvedMode: ResolvedThemeMode = getResolvedMode(mode, systemMode);
   const themeConfig = useMemo(() => getThemeConfig(resolvedMode), [resolvedMode]);
 
-  const setMode = (nextMode: ThemeMode) => {
+  const setMode = useCallback((nextMode: ThemeMode) => {
     if (nextMode === mode) {
       return;
     }
@@ -105,7 +105,7 @@ export const ThemeProvider = ({ children }: PropsWithChildren) => {
       root.removeAttribute('data-theme-transition');
       applyMode();
     }
-  };
+  }, [mode, resolvedMode, systemMode]);
 
   useLayoutEffect(() => {
     if (typeof document === 'undefined') {
@@ -136,7 +136,7 @@ export const ThemeProvider = ({ children }: PropsWithChildren) => {
       resolvedMode,
       setMode,
     }),
-    [mode, resolvedMode],
+    [mode, resolvedMode, setMode],
   );
 
   return (
