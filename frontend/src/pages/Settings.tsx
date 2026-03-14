@@ -139,29 +139,18 @@ export default function SettingsPage() {
       setTestResult(null);
       setShowTestResult(false);
       
-      // 手动保存配置后，需要同步更新预设激活状态
-      // 因为用户手动修改的配置可能与之前激活的预设不一致了
-      // 重新加载预设列表以确保状态正确（后端在save时会自动取消激活状态）
-      if (activePresetId) {
-        // 检查当前保存的配置是否与激活预设一致
-        const activePreset = presets.find(p => p.id === activePresetId);
-        if (activePreset) {
-          const presetConfig = activePreset.config;
-          const configMismatch =
-            presetConfig.api_provider !== values.api_provider ||
-            presetConfig.api_key !== values.api_key ||
-            presetConfig.api_base_url !== values.api_base_url ||
-            presetConfig.llm_model !== values.llm_model ||
-            presetConfig.temperature !== values.temperature ||
-            presetConfig.max_tokens !== values.max_tokens;
-          
-          if (configMismatch) {
-            // 配置已变更，清除前端的激活状态标记
-            setActivePresetId(undefined);
-            message.info('配置已更改，预设激活状态已取消');
-            // 刷新预设列表以同步后端取消激活的状态
-            loadPresets();
-          }
+      // 手动保存配置后，同步刷新预设激活状态。
+      // 后端会在配置与激活预设不一致时自动取消激活，这里统一拉取最新状态，
+      // 确保设置界面与预设列表联动一致。
+      const previousActivePresetId = activePresetId;
+      await loadPresets();
+      
+      if (previousActivePresetId) {
+        const latestPresets = await settingsApi.getPresets();
+        const stillActive = latestPresets.active_preset_id === previousActivePresetId;
+        if (!stillActive) {
+          setActivePresetId(undefined);
+          message.info('配置已更改，预设激活状态已取消');
         }
       }
       
