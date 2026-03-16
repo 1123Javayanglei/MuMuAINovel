@@ -277,6 +277,7 @@ services:
     volumes:
       - ./logs:/app/logs
       - ./.env:/app/.env:ro
+      - ./storage/generated_covers:/app/backend/storage/generated_covers
     environment:
       # 应用配置
       - APP_NAME=${APP_NAME:-MuMuAINovel}
