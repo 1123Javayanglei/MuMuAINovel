@@ -87,7 +87,15 @@ export default function SettingsPage() {
     setInitialLoading(true);
     try {
       const settings = await settingsApi.getSettings();
-      form.setFieldsValue(settings);
+      form.setFieldsValue({
+        ...defaultCoverSettings,
+        ...settings,
+        cover_api_provider: settings.cover_api_provider || defaultCoverSettings.cover_api_provider,
+        cover_api_key: settings.cover_api_key ?? defaultCoverSettings.cover_api_key,
+        cover_api_base_url: settings.cover_api_base_url || defaultCoverSettings.cover_api_base_url,
+        cover_image_model: settings.cover_image_model || defaultCoverSettings.cover_image_model,
+        cover_enabled: settings.cover_enabled ?? defaultCoverSettings.cover_enabled,
+      });
 
       // 判断是否为默认设置（id='0'表示来自.env的默认配置）
       if (settings.id === '0' || !settings.id) {
@@ -109,6 +117,7 @@ export default function SettingsPage() {
           llm_model: 'gpt-4',
           temperature: 0.7,
           max_tokens: 2000,
+          ...defaultCoverSettings,
         });
       } else {
         message.error('加载设置失败');
@@ -242,6 +251,7 @@ export default function SettingsPage() {
           llm_model: 'gpt-4',
           temperature: 0.7,
           max_tokens: 2000,
+          ...defaultCoverSettings,
         });
         message.info('已重置为默认值，请点击保存');
       },
@@ -278,6 +288,13 @@ export default function SettingsPage() {
     { value: 'https://api.mumuverse.space/v1beta', label: 'https://api.mumuverse.space/v1beta', defaultModel: 'gemini-3.1-flash-image-preview' },
     { value: 'https://api.mumuverse.space/v1', label: 'https://api.mumuverse.space/v1', defaultModel: 'gpt-image-1.5' },
   ];
+  const defaultCoverSettings = {
+    cover_enabled: false,
+    cover_api_provider: 'mumu',
+    cover_api_key: '',
+    cover_api_base_url: mumuCoverBaseUrlOptions[0].value,
+    cover_image_model: mumuCoverBaseUrlOptions[0].defaultModel,
+  };
 
   const apiProviders = [
     {
@@ -1651,14 +1668,13 @@ export default function SettingsPage() {
                     <Spin spinning={initialLoading}>
                       <Form form={form} layout="vertical" onFinish={handleSave} autoComplete="off">
 
-                        <Form.Item name="cover_enabled" valuePropName="checked" style={{ marginBottom: 16 }}>
+                        <Form.Item label="封面图片生成功能" name="cover_enabled" style={{ marginBottom: 16 }}>
                           <Select
                             size={isMobile ? 'middle' : 'large'}
-                            onChange={(value) => form.setFieldsValue({ cover_enabled: value === 'enabled' })}
-                            value={form.getFieldValue('cover_enabled') ? 'enabled' : 'disabled'}
+                            onChange={() => setCoverTestResult(null)}
                             options={[
-                              { value: 'enabled', label: '启用封面图片生成' },
-                              { value: 'disabled', label: '停用封面图片生成' },
+                              { value: true, label: '启用封面图片生成' },
+                              { value: false, label: '停用封面图片生成' },
                             ]}
                           />
                         </Form.Item>
