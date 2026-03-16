@@ -218,6 +218,14 @@ export const settingsApi = {
       suggestions?: string[];
     }>('/settings/test', params),
 
+  testCoverConnection: (params: { cover_api_provider: string; cover_api_key: string; cover_api_base_url?: string; cover_image_model: string }) =>
+    api.post<unknown, {
+      success: boolean;
+      message: string;
+      provider?: string;
+      model?: string;
+    }>('/settings/cover/test', params),
+
   checkFunctionCalling: (params: { api_key: string; api_base_url: string; provider: string; llm_model: string }) =>
     api.post<unknown, {
       success: boolean;
@@ -295,6 +303,43 @@ export const projectApi = {
     api.put<unknown, Project>(`/projects/${id}`, data),
 
   deleteProject: (id: string) => api.delete(`/projects/${id}`),
+
+  generateCover: (id: string, overwrite: boolean = true) =>
+    api.post<unknown, {
+      project_id: string;
+      cover_status: string;
+      cover_image_url?: string;
+      cover_prompt?: string;
+      provider?: string;
+      model?: string;
+      message: string;
+    }>(`/projects/${id}/cover/generate`, { overwrite }),
+
+  downloadCover: async (id: string, filename?: string) => {
+    const response = await axios.get(`/api/projects/${id}/cover/download`, {
+      responseType: 'blob',
+      withCredentials: true,
+    });
+    const contentDisposition = response.headers['content-disposition'];
+    let finalFilename = filename || 'novel-cover.png';
+    if (contentDisposition) {
+      const utf8Match = /filename\*=UTF-8''(.+)/.exec(contentDisposition);
+      const basicMatch = /filename="?([^";]+)"?/.exec(contentDisposition);
+      if (utf8Match?.[1]) {
+        finalFilename = decodeURIComponent(utf8Match[1]);
+      } else if (basicMatch?.[1]) {
+        finalFilename = basicMatch[1];
+      }
+    }
+    const url = window.URL.createObjectURL(new Blob([response.data]));
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', finalFilename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  },
 
   exportProject: (id: string) => {
     window.open(`/api/projects/${id}/export`, '_blank');

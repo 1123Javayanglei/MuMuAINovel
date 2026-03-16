@@ -172,6 +172,28 @@ export default function ProjectList() {
     }
   };
 
+  const handleGenerateCover = async (project: Project, overwrite: boolean = true) => {
+    try {
+      message.loading({ content: `正在为《${project.title}》生成封面...`, key: `cover-${project.id}` });
+      await projectApi.generateCover(project.id, overwrite);
+      message.success({ content: `《${project.title}》封面生成成功`, key: `cover-${project.id}` });
+      await refreshProjects();
+    } catch (error) {
+      console.error('生成封面失败:', error);
+      message.error({ content: `《${project.title}》封面生成失败`, key: `cover-${project.id}` });
+    }
+  };
+
+  const handleDownloadCover = async (project: Project) => {
+    try {
+      await projectApi.downloadCover(project.id, `${project.title}-cover.png`);
+      message.success(`《${project.title}》封面已开始下载`);
+    } catch (error) {
+      console.error('下载封面失败:', error);
+      message.error('下载封面失败');
+    }
+  };
+
   const getStatusTag = (status: string) => {
     const statusConfig: Record<string, { color: string; text: string; icon: ReactNode }> = {
       planning: { color: 'blue', text: '规划', icon: <CalendarOutlined /> },
@@ -837,6 +859,8 @@ export default function ProjectList() {
               onOpenInspiration={() => navigate('/inspiration')}
               onEnterProject={handleEnterProject}
               onDeleteProject={handleDelete}
+              onGenerateCover={handleGenerateCover}
+              onDownloadCover={handleDownloadCover}
               formatWordCount={formatWordCount}
               getProgress={getProgress}
               getProgressColor={getProgressColor}

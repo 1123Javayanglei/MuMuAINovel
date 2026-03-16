@@ -24,6 +24,53 @@ class WritingStyleManager:
 
 class PromptService:
     """提示词模板管理"""
+
+    NOVEL_COVER_PROMPT_TEMPLATE = """创作一幅高质量小说封面插图，适用于竖版书籍封面。
+
+小说标题是：“{title}”。
+类型为 {genre}。核心主题是 {theme}。故事摘要如下：{description}
+
+画面应具有电影感、精致、富有氛围和情感表现力，并具备清晰的视觉焦点和强烈的象征性意象。请优先展现符合小说类型的视觉叙事和情绪，而不是死板地描绘具体场景。
+
+这必须看起来像一幅专业的网络小说或实体出版物风格的封面。
+
+硬性要求：
+- 必须在画面醒目位置包含小说标题文字：“{title}”，文字排版需极具艺术感，并与小说的 {genre} 类型风格完美融合。
+- 适用于标准小说封面的竖版构图（2:3 比例）。
+- 画面中只能出现标题文字，绝不能出现作者名字、副标题或其他无关的随机字母。
+- 无标志 (Logo)。
+- 无水印。
+- 无边框。
+- 无 UI 元素。
+- 无样机展示效果 (Mockup)。
+
+最终图像必须是一张完整、专业的书籍封面艺术作品，背景插画与标题排版需相得益彰。"""
+
+    @classmethod
+    async def build_novel_cover_prompt(
+        cls,
+        project: Any,
+        user_id: str = None,
+        db = None,
+    ) -> str:
+        """基于项目基础信息构建小说封面提示词，支持用户自定义模板"""
+        title = (getattr(project, "title", "") or "未命名小说").strip()
+        genre = (getattr(project, "genre", "") or "未指定类型").strip()
+        theme = (getattr(project, "theme", "") or "未指定主题").strip()
+        description = (getattr(project, "description", "") or "无额外简介").strip()
+
+        compact_description = description[:300]
+        template = await cls.get_template_with_fallback(
+            "NOVEL_COVER_PROMPT_TEMPLATE",
+            user_id=user_id,
+            db=db,
+        )
+        return template.format(
+            title=title,
+            genre=genre,
+            theme=theme,
+            description=compact_description,
+        )
     
     # ========== V2版本提示词模板（RTCO框架）==========
     
@@ -2813,6 +2860,12 @@ class PromptService:
         
         # 定义所有模板及其元信息
         template_definitions = {
+            "NOVEL_COVER_PROMPT_TEMPLATE": {
+                "name": "小说封面生成",
+                "category": "封面生成",
+                "description": "根据项目基础信息生成小说封面绘制提示词，适用于竖版书籍封面",
+                "parameters": ["title", "genre", "theme", "description"]
+            },
             "WORLD_BUILDING": {
                 "name": "世界构建",
                 "category": "世界构建",

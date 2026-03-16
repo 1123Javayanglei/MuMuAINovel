@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Card, Form, Input, Button, Select, Slider, InputNumber, message, Space, Typography, Spin, Modal, Alert, Grid, Tabs, List, Tag, Popconfirm, Empty, Row, Col, theme } from 'antd';
-import { SaveOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, ThunderboltOutlined, PlusOutlined, EditOutlined, CopyOutlined, WarningOutlined } from '@ant-design/icons';
+import { SaveOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, ThunderboltOutlined, PlusOutlined, EditOutlined, CopyOutlined, WarningOutlined, PictureOutlined } from '@ant-design/icons';
 import { settingsApi, mcpPluginApi } from '../services/api';
 import type { SettingsUpdate, APIKeyPreset, PresetCreateRequest, APIKeyPresetConfig } from '../types';
 import { eventBus, EventNames } from '../store/eventBus';
@@ -35,6 +35,13 @@ export default function SettingsPage() {
     suggestions?: string[];
   } | null>(null);
   const [showTestResult, setShowTestResult] = useState(false);
+  const [testingCoverApi, setTestingCoverApi] = useState(false);
+  const [coverTestResult, setCoverTestResult] = useState<{
+    success: boolean;
+    message: string;
+    provider?: string;
+    model?: string;
+  } | null>(null);
 
   // 预设相关状态
   const [activeTab, setActiveTab] = useState('current');
@@ -265,19 +272,27 @@ export default function SettingsPage() {
     });
   };
 
+  const mumuTextDefaultUrl = 'https://api.mumuverse.space/v1';
+  const mumuRegisterUrl = 'https://api.mumuverse.space/register?aff=4NN8';
+  const mumuCoverBaseUrlOptions = [
+    { value: 'https://api.mumuverse.space/v1beta', label: 'https://api.mumuverse.space/v1beta', defaultModel: 'gemini-3.1-flash-image-preview' },
+    { value: 'https://api.mumuverse.space/v1', label: 'https://api.mumuverse.space/v1', defaultModel: 'gpt-image-1.5' },
+  ];
+
   const apiProviders = [
-    { value: 'openai', label: 'OpenAI Compatible', defaultUrl: 'https://api.openai.com/v1' },
-    // { value: 'anthropic', label: 'Anthropic (Claude)', defaultUrl: 'https://api.anthropic.com' },
-    { value: 'gemini', label: 'Google Gemini', defaultUrl: 'https://generativelanguage.googleapis.com/v1beta' },
     {
       value: 'mumu',
       label: 'MuMuのAPI',
-      defaultUrl: 'https://api.mumuverse.space/v1',
+      defaultUrl: mumuTextDefaultUrl,
       defaultModel: 'gemini-3-flash-preview'
     },
+    { value: 'openai', label: 'OpenAI Compatible', defaultUrl: 'https://api.openai.com/v1' },
+    // { value: 'anthropic', label: 'Anthropic (Claude)', defaultUrl: 'https://api.anthropic.com' },
+    { value: 'gemini', label: 'Google Gemini', defaultUrl: 'https://generativelanguage.googleapis.com/v1beta' },
   ];
 
   const selectedProvider = Form.useWatch('api_provider', form);
+  const selectedCoverProvider = Form.useWatch('cover_api_provider', form);
   const selectedPresetProvider = Form.useWatch('api_provider', presetForm);
 
   const handleProviderChange = (value: string) => {
@@ -296,6 +311,83 @@ export default function SettingsPage() {
     // 清空模型列表，需要重新获取
     setModelOptions([]);
     setModelsFetched(false);
+  };
+
+  const coverApiProviders = [
+    {
+      value: 'mumu',
+      label: 'MuMuのAPI',
+      defaultUrl: mumuCoverBaseUrlOptions[0].value,
+      defaultModel: mumuCoverBaseUrlOptions[0].defaultModel,
+    },
+    { value: 'gemini', label: 'Google Gemini', defaultUrl: 'https://generativelanguage.googleapis.com/v1beta' },
+    { value: 'grok', label: 'Grok', defaultUrl: 'https://api.x.ai/v1' },
+  ];
+
+  const handleCoverProviderChange = (value: string) => {
+    const provider = coverApiProviders.find(p => p.value === value);
+    if (!provider) {
+      setCoverTestResult(null);
+      return;
+    }
+
+    const nextValues: Record<string, string> = {};
+    if (provider.defaultUrl) {
+      nextValues.cover_api_base_url = provider.defaultUrl;
+    }
+    if (provider.value === 'mumu') {
+      nextValues.cover_api_key = '';
+      nextValues.cover_image_model = provider.defaultModel || mumuCoverBaseUrlOptions[0].defaultModel;
+    }
+
+    form.setFieldsValue(nextValues);
+    setCoverTestResult(null);
+  };
+
+  const handleMumuCoverBaseUrlChange = (value: string) => {
+    const option = mumuCoverBaseUrlOptions.find(item => item.value === value);
+    form.setFieldsValue({
+      cover_api_base_url: value,
+      cover_image_model: option?.defaultModel || mumuCoverBaseUrlOptions[0].defaultModel,
+    });
+    setCoverTestResult(null);
+  };
+
+  const handleCoverTestConnection = async () => {
+    const coverApiProvider = form.getFieldValue('cover_api_provider');
+    const coverApiKey = form.getFieldValue('cover_api_key');
+    const coverApiBaseUrl = form.getFieldValue('cover_api_base_url');
+    const coverImageModel = form.getFieldValue('cover_image_model');
+
+    if (!coverApiProvider || !coverApiKey || !coverImageModel) {
+      message.warning('请先填写完整的封面图片配置信息');
+      return;
+    }
+
+    setTestingCoverApi(true);
+    setCoverTestResult(null);
+    try {
+      const result = await settingsApi.testCoverConnection({
+        cover_api_provider: coverApiProvider,
+        cover_api_key: coverApiKey,
+        cover_api_base_url: coverApiBaseUrl,
+        cover_image_model: coverImageModel,
+      });
+      setCoverTestResult(result);
+      if (result.success) {
+        message.success('封面图片接口测试成功');
+      } else {
+        message.error(result.message || '封面图片接口测试失败');
+      }
+    } catch (error) {
+      console.error('封面图片接口测试失败:', error);
+      setCoverTestResult({
+        success: false,
+        message: '封面图片接口测试失败',
+      });
+    } finally {
+      setTestingCoverApi(false);
+    }
   };
 
   const handleFetchModels = async (silent: boolean = false) => {
@@ -1002,7 +1094,7 @@ export default function SettingsPage() {
               items={[
                 {
                   key: 'current',
-                  label: '当前配置',
+                  label: <Space size={6}><ThunderboltOutlined />文本模型配置</Space>,
                   children: (
                     <Space direction="vertical" size={isMobile ? 'middle' : 'large'} style={{ width: '100%' }}>
 
@@ -1079,7 +1171,7 @@ export default function SettingsPage() {
                                   <div>
                                     <Button
                                       type="primary"
-                                      onClick={() => window.open('https://api.mumuverse.space/register?aff=4NN8', '_blank', 'noopener,noreferrer')}
+                                      onClick={() => window.open(mumuRegisterUrl, '_blank', 'noopener,noreferrer')}
                                     >
                                       打开 MuMuのAPI 站点免费注册
                                     </Button>
@@ -1553,8 +1645,119 @@ export default function SettingsPage() {
                   ),
                 },
                 {
+                  key: 'cover',
+                  label: <Space size={6}><PictureOutlined />图片模型配置</Space>,
+                  children: (
+                    <Spin spinning={initialLoading}>
+                      <Form form={form} layout="vertical" onFinish={handleSave} autoComplete="off">
+
+                        <Form.Item name="cover_enabled" valuePropName="checked" style={{ marginBottom: 16 }}>
+                          <Select
+                            size={isMobile ? 'middle' : 'large'}
+                            onChange={(value) => form.setFieldsValue({ cover_enabled: value === 'enabled' })}
+                            value={form.getFieldValue('cover_enabled') ? 'enabled' : 'disabled'}
+                            options={[
+                              { value: 'enabled', label: '启用封面图片生成' },
+                              { value: 'disabled', label: '停用封面图片生成' },
+                            ]}
+                          />
+                        </Form.Item>
+
+                        <Form.Item label="封面图片 Provider" name="cover_api_provider" rules={[{ required: true, message: '请选择封面图片 Provider' }]}>
+                          <Select size={isMobile ? 'middle' : 'large'} onChange={handleCoverProviderChange}>
+                            {coverApiProviders.map(provider => (
+                              <Option key={provider.value} value={provider.value}>{provider.label}</Option>
+                            ))}
+                          </Select>
+                        </Form.Item>
+
+                        {selectedCoverProvider === 'mumu' && (
+                          <Alert
+                            type="info"
+                            showIcon
+                            message="MuMuのAPI 专属适配器"
+                            description={
+                              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                                <Text>
+                                  已固定提供 MuMuのAPI 图片接口地址选项，切换地址时会自动带出推荐模型。API Key 需前往 MuMuのAPI 站点注册获取。
+                                </Text>
+                                <div>
+                                  <Button
+                                    type="primary"
+                                    onClick={() => window.open(mumuRegisterUrl, '_blank', 'noopener,noreferrer')}
+                                  >
+                                    打开 MuMuのAPI 站点免费注册
+                                  </Button>
+                                </div>
+                              </Space>
+                            }
+                            style={{ marginBottom: 16 }}
+                          />
+                        )}
+
+                        <Form.Item label="封面图片 API Key" name="cover_api_key" rules={[{ required: true, message: '请输入封面图片 API Key' }]}>
+                          <Input.Password size={isMobile ? 'middle' : 'large'} placeholder={selectedCoverProvider === 'mumu' ? '请输入 MuMuのAPI Key' : '输入封面图片 API Key'} autoComplete="new-password" />
+                        </Form.Item>
+
+                        <Form.Item label="封面图片 API 地址" name="cover_api_base_url" rules={[{ type: 'url', message: '请输入有效的URL' }]}>
+                          {selectedCoverProvider === 'mumu' ? (
+                            <Select
+                              size={isMobile ? 'middle' : 'large'}
+                              onChange={handleMumuCoverBaseUrlChange}
+                              options={mumuCoverBaseUrlOptions.map(option => ({
+                                value: option.value,
+                                label: option.label,
+                              }))}
+                            />
+                          ) : (
+                            <Input size={isMobile ? 'middle' : 'large'} placeholder={selectedCoverProvider === 'grok' ? 'https://api.x.ai/v1' : 'https://generativelanguage.googleapis.com/v1beta'} />
+                          )}
+                        </Form.Item>
+
+                        <Form.Item label="封面图片模型" name="cover_image_model" rules={[{ required: true, message: '请输入封面图片模型名称' }]}>
+                          <Input
+                            size={isMobile ? 'middle' : 'large'}
+                            placeholder={selectedCoverProvider === 'mumu'
+                              ? '选择地址后自动填入推荐模型'
+                              : selectedCoverProvider === 'grok'
+                                ? 'grok-2-image'
+                                : 'gemini-2.0-flash-exp-image-generation'}
+                          />
+                        </Form.Item>
+
+                        {coverTestResult && (
+                          <Alert
+                            type={coverTestResult.success ? 'success' : 'error'}
+                            showIcon
+                            message={coverTestResult.message}
+                            description={coverTestResult.success ? `Provider: ${coverTestResult.provider || '-'} / Model: ${coverTestResult.model || '-'}` : undefined}
+                            style={{ marginBottom: 16 }}
+                          />
+                        )}
+
+                        <Form.Item style={{ marginBottom: 0, marginTop: 24 }}>
+                          <Space wrap style={{ width: '100%', justifyContent: 'space-between' }}>
+                            <Space wrap>
+                              <Button
+                                icon={<ThunderboltOutlined />}
+                                onClick={handleCoverTestConnection}
+                                loading={testingCoverApi}
+                                style={{ borderColor: token.colorSuccess, color: token.colorSuccess, fontWeight: 500 }}
+                              >
+                                {testingCoverApi ? '测试中...' : '测试封面接口'}
+                              </Button>
+                              <Button icon={<ReloadOutlined />} onClick={handleReset}>重置</Button>
+                            </Space>
+                            <Button type="primary" icon={<SaveOutlined />} htmlType="submit" loading={loading}>保存封面配置</Button>
+                          </Space>
+                        </Form.Item>
+                      </Form>
+                    </Spin>
+                  ),
+                },
+                {
                   key: 'presets',
-                  label: '配置预设',
+                  label: <Space size={6}><CopyOutlined />配置预设</Space>,
                   children: renderPresetsList(),
                 },
               ]}
@@ -1606,9 +1809,9 @@ export default function SettingsPage() {
                   style={{ marginBottom: 16 }}
                 >
                   <Select placeholder="选择提供商" onChange={handlePresetProviderChange}>
+                    <Select.Option value="mumu">MuMuのAPI</Select.Option>
                     <Select.Option value="openai">OpenAI</Select.Option>
                     <Select.Option value="gemini">Google Gemini</Select.Option>
-                    <Select.Option value="mumu">MuMuのAPI</Select.Option>
                   </Select>
                 </Form.Item>
 
@@ -1625,7 +1828,7 @@ export default function SettingsPage() {
                         <div>
                           <Button
                             type="primary"
-                            onClick={() => window.open('https://api.mumuverse.space/register?aff=4NN8', '_blank', 'noopener,noreferrer')}
+                            onClick={() => window.open(mumuRegisterUrl, '_blank', 'noopener,noreferrer')}
                           >
                             打开 MuMuのAPI 站点免费注册
                           </Button>

@@ -14,6 +14,7 @@ import time
 
 from app.database import get_db
 from app.models.settings import Settings
+from app.services.cover_generation_service import cover_generation_service
 from app.schemas.settings import (
     SettingsCreate, SettingsUpdate, SettingsResponse,
     APIKeyPreset, APIKeyPresetConfig, PresetCreateRequest,
@@ -27,6 +28,13 @@ from app.services.ai_service import AIService, create_user_ai_service, create_us
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/settings", tags=["设置管理"])
+
+
+class CoverSettingsTestRequest(BaseModel):
+    cover_api_provider: str
+    cover_api_key: str
+    cover_api_base_url: Optional[str] = None
+    cover_image_model: str
 
 
 def read_env_defaults() -> Dict[str, Any]:
@@ -140,6 +148,25 @@ async def get_settings(
     
     logger.info(f"用户 {user.user_id} 获取已保存的设置")
     return settings
+
+
+@router.post("/cover/test")
+async def test_cover_settings(
+    data: CoverSettingsTestRequest,
+    user: User = Depends(require_login),
+):
+    result = await cover_generation_service.test_cover_settings(
+        provider=data.cover_api_provider,
+        api_key=data.cover_api_key,
+        api_base_url=data.cover_api_base_url,
+        model=data.cover_image_model,
+    )
+    return {
+        "success": result.success,
+        "message": result.message,
+        "provider": result.provider,
+        "model": result.model,
+    }
 
 
 @router.post("", response_model=SettingsResponse)

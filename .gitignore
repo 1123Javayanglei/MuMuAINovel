@@ -79,6 +79,7 @@ backend/data/*.db-shm
 backend/data/*.db-wal
 backend/data/users.json
 backend/data/admins.json
+backend/storage/
 
 # Temporary files
 *.bak

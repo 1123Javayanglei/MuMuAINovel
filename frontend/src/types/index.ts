@@ -22,6 +22,11 @@ export interface Settings {
   temperature: number;
   max_tokens: number;
   system_prompt?: string;
+  cover_api_provider?: string;
+  cover_api_key?: string;
+  cover_api_base_url?: string;
+  cover_image_model?: string;
+  cover_enabled?: boolean;
   preferences?: string;
   created_at: string;
   updated_at: string;
@@ -35,6 +40,11 @@ export interface SettingsUpdate {
   temperature?: number;
   max_tokens?: number;
   system_prompt?: string;
+  cover_api_provider?: string;
+  cover_api_key?: string;
+  cover_api_base_url?: string;
+  cover_image_model?: string;
+  cover_enabled?: boolean;
   preferences?: string;
 }
 
@@ -102,6 +112,11 @@ export interface Project {
   chapter_count?: number;
   narrative_perspective?: string;
   character_count?: number;
+  cover_image_url?: string;
+  cover_prompt?: string;
+  cover_status?: 'none' | 'generating' | 'ready' | 'failed';
+  cover_error?: string;
+  cover_updated_at?: string;
   created_at: string;
   updated_at: string;
 }
