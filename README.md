@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-1.3.8-blue.svg)
+![Version](https://img.shields.io/badge/version-1.3.9-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.11-blue.svg)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.109.0-green.svg)
 ![React](https://img.shields.io/badge/react-18.3.1-blue.svg)
@@ -36,22 +36,26 @@
 
 **[☕ 请我喝杯咖啡](https://mumuverse.space:1588/)**
 
+**[🌐 MuMuのAPI站点](https://api.mumuverse.space/register?aff=4NN8)**
+
+> 在 MuMu の API 站点充值满 50 元及以上，也可以获得下方赞助专属权益。
+
 ### 🎁 赞助专属权益
 
 | 权益 | 说明 |
 |------|------|
 | 📋 **优先需求响应** | 您的功能需求和问题反馈将获得优先处理 |
-| 🚀 **Windows一键启动** | 获取免安装EXE程序，双击即可使用 |
+| 🚀 **Windows一键启动** | 获取免安装 EXE 程序，双击即可使用 |
 | 💬 **专属技术支持** | 加入赞助者内部群，获得远程协助和配置指导 |
 
-### ☕ 赞助金额
+### ☕ 赞助 / API 站点充值档位
 
 | 金额 | 描述 |
 |------|------|
 | ¥5 | 🌶️ 一包辣条 |
 | ¥10 | 🍱 一顿拼好饭 |
 | ¥20 | 🧋 一杯咖啡 |
-| ¥50 | 🍖 一次烧烤 |
+| ¥50 | 🍖 一次烧烤  |
 | ¥99 | 🍲 一顿海底捞 |
 
 您的支持是我持续开发的动力！🙏
