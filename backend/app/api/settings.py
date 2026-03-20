@@ -18,12 +18,14 @@ from app.services.cover_generation_service import cover_generation_service
 from app.schemas.settings import (
     SettingsCreate, SettingsUpdate, SettingsResponse,
     APIKeyPreset, APIKeyPresetConfig, PresetCreateRequest,
-    PresetUpdateRequest, PresetResponse, PresetListResponse
+    PresetUpdateRequest, PresetResponse, PresetListResponse,
+    SystemSMTPSettingsResponse, SystemSMTPSettingsUpdate, SMTPTestRequest
 )
 from app.user_manager import User
 from app.logger import get_logger
 from app.config import settings as app_settings, PROJECT_ROOT
 from app.services.ai_service import AIService, create_user_ai_service, create_user_ai_service_with_mcp, normalize_provider
+from app.services.email_service import email_service
 
 logger = get_logger(__name__)
 
@@ -54,6 +56,46 @@ def require_login(request: Request):
     if not hasattr(request.state, "user") or not request.state.user:
         raise HTTPException(status_code=401, detail="需要登录")
     return request.state.user
+
+
+def require_admin(user: User = Depends(require_login)):
+    """依赖：要求管理员权限"""
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="仅管理员可访问系统设置")
+    return user
+
+
+async def get_or_create_admin_settings(db: AsyncSession, user: User) -> Settings:
+    """获取或创建管理员设置，系统级 SMTP 配置挂在管理员设置记录上"""
+    result = await db.execute(
+        select(Settings).where(Settings.user_id == user.user_id)
+    )
+    settings = result.scalar_one_or_none()
+
+    if not settings:
+        env_defaults = read_env_defaults()
+        settings = Settings(
+            user_id=user.user_id,
+            smtp_provider=app_settings.SMTP_PROVIDER,
+            smtp_host=app_settings.SMTP_HOST,
+            smtp_port=app_settings.SMTP_PORT,
+            smtp_username=app_settings.SMTP_USERNAME,
+            smtp_password=app_settings.SMTP_PASSWORD,
+            smtp_use_tls=app_settings.SMTP_USE_TLS,
+            smtp_use_ssl=app_settings.SMTP_USE_SSL,
+            smtp_from_email=app_settings.SMTP_FROM_EMAIL,
+            smtp_from_name=app_settings.SMTP_FROM_NAME,
+            email_auth_enabled=app_settings.EMAIL_AUTH_ENABLED,
+            email_register_enabled=app_settings.EMAIL_REGISTER_ENABLED,
+            verification_code_ttl_minutes=app_settings.EMAIL_VERIFICATION_CODE_TTL_MINUTES,
+            verification_resend_interval_seconds=app_settings.EMAIL_VERIFICATION_RESEND_INTERVAL_SECONDS,
+            **env_defaults
+        )
+        db.add(settings)
+        await db.commit()
+        await db.refresh(settings)
+
+    return settings
 
 
 async def get_user_ai_service(
@@ -166,6 +208,115 @@ async def test_cover_settings(
         "message": result.message,
         "provider": result.provider,
         "model": result.model,
+    }
+
+
+@router.get("/system/smtp", response_model=SystemSMTPSettingsResponse)
+async def get_system_smtp_settings(
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取系统 SMTP 设置（仅管理员）"""
+    settings = await get_or_create_admin_settings(db, user)
+    return settings
+
+
+@router.put("/system/smtp", response_model=SystemSMTPSettingsResponse)
+async def update_system_smtp_settings(
+    data: SystemSMTPSettingsUpdate,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """更新系统 SMTP 设置（仅管理员）"""
+    settings = await get_or_create_admin_settings(db, user)
+    update_data = data.model_dump(exclude_unset=True)
+
+    if update_data.get("smtp_provider") == "qq":
+        update_data.setdefault("smtp_host", "smtp.qq.com")
+        update_data.setdefault("smtp_port", 465)
+        update_data.setdefault("smtp_use_ssl", True)
+        update_data.setdefault("smtp_use_tls", False)
+
+    if update_data.get("smtp_use_ssl") and update_data.get("smtp_use_tls"):
+        raise HTTPException(status_code=400, detail="SSL 和 TLS 不能同时启用")
+
+    for key, value in update_data.items():
+        setattr(settings, key, value)
+
+    await db.commit()
+    await db.refresh(settings)
+    logger.info(f"管理员 {user.user_id} 更新系统 SMTP 设置")
+    return settings
+
+
+@router.post("/system/smtp/test")
+async def test_system_smtp_settings(
+    data: SMTPTestRequest,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """测试系统 SMTP 设置（真实发送测试邮件）"""
+    settings = await get_or_create_admin_settings(db, user)
+
+    if not settings.smtp_host or not settings.smtp_username or not settings.smtp_password:
+        raise HTTPException(status_code=400, detail="请先完善 SMTP 主机、用户名和授权码")
+
+    if settings.smtp_provider == "qq" and settings.smtp_host != "smtp.qq.com":
+        raise HTTPException(status_code=400, detail="QQ 邮箱 SMTP 主机必须为 smtp.qq.com")
+
+    if "@" not in data.to_email or "." not in data.to_email.split("@")[-1]:
+        raise HTTPException(status_code=400, detail="测试收件邮箱格式不正确")
+
+    from_email = settings.smtp_from_email or settings.smtp_username
+    if not from_email:
+        raise HTTPException(status_code=400, detail="请先配置发件人邮箱或 SMTP 用户名")
+
+    subject = "MuMuAINovel SMTP 测试邮件"
+    text_body = (
+        "这是一封来自 MuMuAINovel 系统设置页面的 SMTP 测试邮件。\n\n"
+        f"发送时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"SMTP 服务商：{settings.smtp_provider}\n"
+        f"SMTP 主机：{settings.smtp_host}:{settings.smtp_port}\n"
+        "如果你收到这封邮件，说明当前 SMTP 配置可正常发送邮件。"
+    )
+    html_body = f"""
+    <div style=\"font-family: Arial, sans-serif; line-height: 1.7; color: #1f1f1f;\">
+      <h2 style=\"margin-bottom: 12px;\">MuMuAINovel SMTP 测试邮件</h2>
+      <p>这是一封来自系统设置页面的 SMTP 测试邮件。</p>
+      <ul>
+        <li><strong>发送时间：</strong>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</li>
+        <li><strong>SMTP 服务商：</strong>{settings.smtp_provider}</li>
+        <li><strong>SMTP 主机：</strong>{settings.smtp_host}:{settings.smtp_port}</li>
+      </ul>
+      <p>如果你收到这封邮件，说明当前 SMTP 配置可正常发送邮件。</p>
+    </div>
+    """
+
+    try:
+        await email_service.send_mail(
+            host=settings.smtp_host,
+            port=settings.smtp_port,
+            username=settings.smtp_username,
+            password=settings.smtp_password,
+            use_tls=settings.smtp_use_tls,
+            use_ssl=settings.smtp_use_ssl,
+            from_email=from_email,
+            from_name=settings.smtp_from_name,
+            to_email=data.to_email,
+            subject=subject,
+            text_body=text_body,
+            html_body=html_body,
+        )
+    except Exception as exc:
+        logger.exception(f"SMTP 测试邮件发送失败: {exc}")
+        raise HTTPException(status_code=400, detail=f"SMTP 测试邮件发送失败: {str(exc)}") from exc
+
+    return {
+        "success": True,
+        "message": f"测试邮件已发送至 {data.to_email}，请检查收件箱和垃圾箱",
+        "provider": settings.smtp_provider,
+        "host": settings.smtp_host,
+        "port": settings.smtp_port,
     }
 
 

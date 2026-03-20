@@ -1,18 +1,19 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Card, Button, Modal, message, Spin, Space, Tag, Typography, Upload, Checkbox, Tooltip, Drawer, Menu, theme } from 'antd';
-import { EditOutlined, BookOutlined, CalendarOutlined, FileTextOutlined, TrophyOutlined, SettingOutlined, UploadOutlined, ApiOutlined, FileSearchOutlined, MenuUnfoldOutlined, MenuFoldOutlined, BulbOutlined, MoonOutlined, DesktopOutlined } from '@ant-design/icons';
-import { projectApi } from '../services/api';
+import { EditOutlined, BookOutlined, CalendarOutlined, FileTextOutlined, TrophyOutlined, SettingOutlined, UploadOutlined, ApiOutlined, FileSearchOutlined, MenuUnfoldOutlined, MenuFoldOutlined, BulbOutlined, MoonOutlined, DesktopOutlined, MailOutlined } from '@ant-design/icons';
+import { authApi, projectApi } from '../services/api';
 import { useStore } from '../store';
 import { useProjectSync } from '../store/hooks';
 import { eventBus, EventNames } from '../store/eventBus';
 import type { ReactNode } from 'react';
-import type { Project } from '../types';
+import type { Project, User } from '../types';
 import UserMenu from '../components/UserMenu';
 import ChangelogFloatingButton from '../components/ChangelogFloatingButton';
 import ThemeSwitch from '../components/ThemeSwitch';
 import { useThemeMode } from '../theme/useThemeMode';
 import SettingsPage from './Settings';
+import SystemSettingsPage from './SystemSettings';
 import MCPPluginsPage from './MCPPlugins';
 import PromptTemplates from './PromptTemplates';
 import BookImport from './BookImport';
@@ -41,11 +42,11 @@ const formatWordCount = (count: number): string => {
   }
 };
 
-type ProjectListView = 'projects' | 'settings' | 'mcp' | 'prompts' | 'book-import';
+type ProjectListView = 'projects' | 'settings' | 'system-settings' | 'mcp' | 'prompts' | 'book-import';
 
 const parseViewFromSearch = (search: string): ProjectListView => {
   const view = new URLSearchParams(search).get('view');
-  if (view === 'settings' || view === 'mcp' || view === 'prompts' || view === 'book-import' || view === 'projects') {
+  if (view === 'settings' || view === 'system-settings' || view === 'mcp' || view === 'prompts' || view === 'book-import' || view === 'projects') {
     return view;
   }
   return 'projects';
@@ -58,6 +59,7 @@ export default function ProjectList() {
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [collapsed, setCollapsed] = useState<boolean>(() => getStoredSidebarCollapsed());
   const [modal, contextHolder] = Modal.useModal();
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [showApiTip, setShowApiTip] = useState(true);
   const [importModalVisible, setImportModalVisible] = useState(false);
   const [exportModalVisible, setExportModalVisible] = useState(false);
@@ -113,6 +115,7 @@ export default function ProjectList() {
 
   useEffect(() => {
     refreshProjects();
+    authApi.getCurrentUser().then(setCurrentUser).catch(() => setCurrentUser(null));
     
     // 监听切换到 MCP 视图的事件
     eventBus.on(EventNames.SWITCH_TO_MCP_VIEW, handleSwitchToMcp);
@@ -396,7 +399,11 @@ export default function ProjectList() {
         ? '拆书导入'
         : activeView === 'mcp'
           ? 'MCP 插件'
-          : 'API 设置';
+          : activeView === 'system-settings'
+            ? '系统设置'
+            : 'API 设置';
+
+  const isAdmin = !!currentUser?.is_admin;
 
   const sideMenuItems = [
     {
@@ -434,6 +441,11 @@ export default function ProjectList() {
           icon: <SettingOutlined />,
           label: 'API 设置',
         },
+        ...(isAdmin ? [{
+          key: 'system-settings',
+          icon: <MailOutlined />,
+          label: '系统设置',
+        }] : []),
         {
           key: 'mumu-api',
           icon: <ApiOutlined />,
@@ -469,6 +481,11 @@ export default function ProjectList() {
       icon: <SettingOutlined />,
       label: 'API 设置',
     },
+    ...(isAdmin ? [{
+      key: 'system-settings',
+      icon: <MailOutlined />,
+      label: '系统设置',
+    }] : []),
     {
       key: 'mumu-api',
       icon: <ApiOutlined />,
@@ -839,6 +856,7 @@ export default function ProjectList() {
           }}
         >
           {activeView === 'settings' && <SettingsPage />}
+          {activeView === 'system-settings' && <SystemSettingsPage />}
           {activeView === 'mcp' && <MCPPluginsPage />}
           {activeView === 'prompts' && <PromptTemplates />}
           

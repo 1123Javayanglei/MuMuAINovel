@@ -98,14 +98,25 @@ api.interceptors.response.use(
         case 400:
           errorMessage = data?.detail || '请求参数错误';
           break;
-        case 401:
-          errorMessage = '未授权，请先登录';
-          if (window.location.pathname !== '/login') {
+        case 401: {
+          const backendDetail = data?.detail || data?.message;
+          const unauthenticatedDetails = [
+            '未登录',
+            '需要登录',
+            '未登录或用户ID缺失',
+            '未登录，无法刷新会话',
+          ];
+          const isUnauthenticated = unauthenticatedDetails.includes(backendDetail);
+
+          errorMessage = backendDetail || '登录状态已失效，请重新登录';
+
+          if (isUnauthenticated && window.location.pathname !== '/login') {
             window.location.href = '/login';
           }
           break;
+        }
         case 403:
-          errorMessage = '没有权限访问';
+          errorMessage = data?.detail || '没有权限访问';
           break;
         case 404:
           errorMessage = data?.detail || '请求的资源不存在';
@@ -139,13 +150,30 @@ api.interceptors.response.use(
 );
 
 export const authApi = {
-  getAuthConfig: () => api.get<unknown, { local_auth_enabled: boolean; linuxdo_enabled: boolean }>('/auth/config'),
+  getAuthConfig: () => api.get<unknown, {
+    local_auth_enabled: boolean;
+    linuxdo_enabled: boolean;
+    email_auth_enabled: boolean;
+    email_register_enabled: boolean;
+  }>('/auth/config'),
 
   localLogin: (username: string, password: string) =>
     api.post<unknown, { success: boolean; message: string; user: User }>('/auth/local/login', { username, password }),
 
   bindAccountLogin: (username: string, password: string) =>
     api.post<unknown, { success: boolean; message: string; user: User }>('/auth/bind/login', { username, password }),
+
+  emailLogin: (payload: import('../types').EmailLoginPayload) =>
+    api.post<unknown, { success: boolean; message: string; user: User }>('/auth/email/login', payload),
+
+  sendEmailCode: (payload: import('../types').EmailSendCodePayload) =>
+    api.post<unknown, { success: boolean; message: string; expire_in_seconds: number; resend_interval_seconds: number }>('/auth/email/send-code', payload),
+
+  emailRegister: (payload: import('../types').EmailRegisterPayload) =>
+    api.post<unknown, { success: boolean; message: string; user: User }>('/auth/email/register', payload),
+
+  resetEmailPassword: (payload: import('../types').EmailResetPasswordPayload) =>
+    api.post<unknown, { success: boolean; message: string }>('/auth/email/reset-password', payload),
 
   getLinuxDOAuthUrl: () => api.get<unknown, AuthUrlResponse>('/auth/linuxdo/url'),
 
@@ -290,6 +318,15 @@ export const settingsApi = {
     api.post<unknown, APIKeyPreset>('/settings/presets/from-current', null, {
       params: { name, description }
     }),
+
+  getSystemSMTPSettings: () =>
+    api.get<unknown, import('../types').SystemSMTPSettings>('/settings/system/smtp'),
+
+  updateSystemSMTPSettings: (data: import('../types').SystemSMTPSettingsUpdate) =>
+    api.put<unknown, import('../types').SystemSMTPSettings>('/settings/system/smtp', data),
+
+  testSystemSMTPSettings: (data: { to_email: string }) =>
+    api.post<unknown, { success: boolean; message: string }>('/settings/system/smtp/test', data),
 };
 
 export const projectApi = {

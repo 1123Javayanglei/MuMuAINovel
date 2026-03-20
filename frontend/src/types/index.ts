@@ -11,6 +11,65 @@ export interface User {
   last_login: string;
 }
 
+export interface EmailLoginPayload {
+  email: string;
+  code: string;
+}
+
+export interface EmailRegisterPayload {
+  email: string;
+  code: string;
+  password: string;
+  display_name?: string;
+}
+
+export interface EmailSendCodePayload {
+  email: string;
+  scene: 'register' | 'login' | 'reset_password';
+}
+
+export interface EmailResetPasswordPayload {
+  email: string;
+  code: string;
+  new_password: string;
+}
+
+export interface SystemSMTPSettings {
+  id: string;
+  user_id: string;
+  smtp_provider: string;
+  smtp_host?: string;
+  smtp_port: number;
+  smtp_username?: string;
+  smtp_password?: string;
+  smtp_use_tls: boolean;
+  smtp_use_ssl: boolean;
+  smtp_from_email?: string;
+  smtp_from_name: string;
+  email_auth_enabled: boolean;
+  email_register_enabled: boolean;
+  verification_code_ttl_minutes: number;
+  verification_resend_interval_seconds: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SystemSMTPSettingsUpdate {
+  smtp_provider?: string;
+  smtp_host?: string;
+  smtp_port?: number;
+  smtp_username?: string;
+  smtp_password?: string;
+  smtp_use_tls?: boolean;
+  smtp_use_ssl?: boolean;
+  smtp_from_email?: string;
+  smtp_from_name?: string;
+  email_auth_enabled?: boolean;
+  email_register_enabled?: boolean;
+  verification_code_ttl_minutes?: number;
+  verification_resend_interval_seconds?: number;
+}
+
 // 设置类型定义
 export interface Settings {
   id: string;
