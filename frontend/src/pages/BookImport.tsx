@@ -688,6 +688,31 @@ export default function BookImport() {
             <p className="ant-upload-hint">首版仅支持 .txt，建议不超过 50MB</p>
           </Dragger>
 
+          <Alert
+            type="info"
+            showIcon
+            message="支持的拆书 TXT 格式要求"
+            description={
+              <div style={{ lineHeight: 1.8 }}>
+                <div>1. 仅支持 <strong>.txt</strong> 文件，建议每章使用单独的章节标题行。</div>
+                <div>2. 推荐格式：<strong>第1章 标题</strong>，下一行开始写正文内容。</div>
+                <div>3. 正文建议按自然段换行，首行可缩进两个字符。</div>
+                <div>4. 章节之间保留空行即可，不要添加多余的分割线、全文完、导出时间等干扰内容。</div>
+                <div style={{ marginTop: 8 }}>
+                  示例：
+                  <pre style={{ margin: '8px 0 0', padding: 12, borderRadius: 8, background: token.colorFillAlter, whiteSpace: 'pre-wrap' }}>
+{`第1章 初入江湖
+这里是第1章正文第一段。
+这里是第1章正文第二段。
+
+第2章 雨夜追踪
+这里是第2章正文内容。`}
+                  </pre>
+                </div>
+              </div>
+            }
+          />
+          
           <Space>
             <Button
               type="primary"
