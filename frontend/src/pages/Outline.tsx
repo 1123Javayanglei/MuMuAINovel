@@ -105,6 +105,17 @@ function parseOutlineStructure(structure?: string): OutlineStructureData {
   }
 }
 
+function getOutlinePreview(content: string, maxLength = 120): { text: string; truncated: boolean } {
+  const normalized = (content || '').replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) {
+    return { text: normalized, truncated: false };
+  }
+  return {
+    text: `${normalized.slice(0, maxLength).trimEnd()}...`,
+    truncated: true
+  };
+}
+
 const { TextArea } = Input;
 
 export default function Outline() {
@@ -122,6 +133,9 @@ export default function Outline() {
   const { token } = theme.useToken();
   const alphaColor = (color: string, alpha: number) =>
     `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
+
+  // ✅ 新增：记录大纲卡片内容的展开/折叠状态（默认折叠）
+  const [outlineContentExpandStatus, setOutlineContentExpandStatus] = useState<Record<string, boolean>>({});
 
   // ✅ 新增：记录场景区域的展开/折叠状态
   const [scenesExpandStatus, setScenesExpandStatus] = useState<Record<string, boolean>>({});
@@ -1993,6 +2007,8 @@ export default function Outline() {
                   const characterEntries = parseCharacterEntries(structureData.characters);
                   const characterNames = getCharacterNames(characterEntries);
                   const organizationNames = getOrganizationNames(characterEntries);
+                  const isOutlineExpanded = outlineContentExpandStatus[item.id] || false;
+                  const previewContent = getOutlinePreview(item.content, isMobile ? 70 : 140);
                   
                   return (
                     <List.Item
@@ -2061,12 +2077,35 @@ export default function Outline() {
                                 lineHeight: '1.6'
                               }}>
                                 <div style={{
-                                  fontWeight: 600,
-                                  color: token.colorTextSecondary,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  gap: 8,
                                   marginBottom: isMobile ? 4 : 6,
-                                  fontSize: isMobile ? 12 : 13
+                                  flexWrap: isMobile ? 'wrap' : 'nowrap'
                                 }}>
-                                  📝 大纲内容
+                                  <div style={{
+                                    fontWeight: 600,
+                                    color: token.colorTextSecondary,
+                                    fontSize: isMobile ? 12 : 13
+                                  }}>
+                                    📝 大纲内容
+                                  </div>
+                                  <Button
+                                    type="link"
+                                    size="small"
+                                    onClick={() => setOutlineContentExpandStatus(prev => ({
+                                      ...prev,
+                                      [item.id]: !isOutlineExpanded
+                                    }))}
+                                    style={{
+                                      padding: 0,
+                                      height: 'auto',
+                                      fontSize: isMobile ? 12 : 13
+                                    }}
+                                  >
+                                    {isOutlineExpanded ? '收起' : '展开'}
+                                  </Button>
                                 </div>
                                 <div style={{
                                   padding: isMobile ? '6px 8px' : '6px 10px',
@@ -2075,12 +2114,16 @@ export default function Outline() {
                                   borderRadius: token.borderRadiusSM,
                                   fontSize: isMobile ? 12 : 13,
                                   color: token.colorText,
-                                  lineHeight: '1.6'
+                                  lineHeight: '1.8',
+                                  whiteSpace: isOutlineExpanded ? 'pre-wrap' : 'normal',
+                                  wordBreak: 'break-word'
                                 }}>
-                                  {item.content}
+                                  {isOutlineExpanded ? item.content : previewContent.text || '暂无内容'}
                                 </div>
                               </div>
-                              
+
+                              {isOutlineExpanded && (
+                                <>
                               {/* ✨ 涉及角色展示 - 优化版（支持角色/组织分类显示） */}
                               {characterNames.length > 0 && (
                                 <div style={{
@@ -2678,6 +2721,8 @@ export default function Outline() {
                                   {structureData.goal}
                                 </div>
                               </div>
+                            )}
+                              </>
                             )}
                           </div>
                         }
