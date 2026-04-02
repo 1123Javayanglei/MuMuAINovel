@@ -53,6 +53,7 @@ import type {
   BookImportTask,
   BookImportPreview,
   BookImportApplyPayload,
+  BookImportCreateTaskPayload,
   BookImportResult,
   BookImportRetryResult,
   BatchAnalysisStatusResponse,
@@ -455,11 +456,12 @@ export const projectApi = {
 };
 
 export const bookImportApi = {
-  createTask: (params: {
-    file: File;
-  }) => {
+  createTask: (params: BookImportCreateTaskPayload) => {
     const formData = new FormData();
     formData.append('file', params.file);
+    const tailChapterCount = params.tail_chapter_count ?? 10;
+    formData.append('extract_mode', params.extract_mode ?? 'tail');
+    formData.append('tail_chapter_count', String(tailChapterCount));
 
     return api.post<unknown, { task_id: string; status: BookImportTask['status'] }>(
       '/book-import/tasks',

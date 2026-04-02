@@ -28,6 +28,7 @@ import { InboxOutlined, PlayCircleOutlined, ReloadOutlined, StopOutlined, Warnin
 import { bookImportApi } from '../services/api';
 import type {
   BookImportApplyPayload,
+  BookImportExtractMode,
   BookImportPreview,
   BookImportStepFailure,
   BookImportTask,
@@ -111,6 +112,8 @@ export default function BookImport() {
   const { token } = theme.useToken();
   const isMobile = window.innerWidth <= 768;
   const [file, setFile] = useState<File | null>(null);
+  const [extractMode, setExtractMode] = useState<BookImportExtractMode>('tail');
+  const [tailChapterCount, setTailChapterCount] = useState(10);
 
   const [taskId, setTaskId] = useState<string | null>(null);
   const [taskStatus, setTaskStatus] = useState<BookImportTask | null>(null);
@@ -322,8 +325,13 @@ export default function BookImport() {
       setPreview(null);
       setTaskStatus(null);
 
+      const normalizedTailChapterCount = Math.max(5, Math.ceil(tailChapterCount / 5) * 5);
+      const normalizedExtractMode = normalizedTailChapterCount > 50 ? 'full' : extractMode;
+
       const response = await bookImportApi.createTask({
         file,
+        extract_mode: normalizedExtractMode,
+        tail_chapter_count: normalizedTailChapterCount,
       });
 
       setTaskId(response.task_id);
@@ -546,6 +554,8 @@ export default function BookImport() {
     setRetrying(false);
     setRetryProgress(0);
     setRetryMessage('');
+    setExtractMode('tail');
+    setTailChapterCount(10);
 
     message.success('已重新开始，请重新上传 TXT 并解析');
   }, []);
@@ -688,6 +698,38 @@ export default function BookImport() {
             <p className="ant-upload-hint">首版仅支持 .txt，建议不超过 50MB</p>
           </Dragger>
 
+          <Card size="small" title="解析范围设置">
+            <Space direction="vertical" style={{ width: '100%' }} size={12}>
+              <Select
+                value={extractMode}
+                onChange={(value) => setExtractMode(value)}
+                options={[
+                  { label: '截取末 x 章反向生成', value: 'tail' },
+                  { label: '整本反向生成', value: 'full' },
+                ]}
+                style={{ width: '100%' }}
+              />
+              <InputNumber
+                min={5}
+                max={55}
+                step={5}
+                precision={0}
+                value={tailChapterCount}
+                disabled={extractMode !== 'tail'}
+                onChange={(value) => setTailChapterCount(typeof value === 'number' ? value : 10)}
+                addonBefore="末尾章节数"
+                style={{ width: '100%' }}
+              />
+              <Text type="secondary">
+                {extractMode === 'tail'
+                  ? tailChapterCount > 50
+                    ? '当前输入已超过 50 章，将自动按整本拆处理。'
+                    : `当前将截取末 ${Math.max(5, Math.ceil(tailChapterCount / 5) * 5)} 章进行反向生成；章节数必须为 5 的倍数，最多 50 章。`
+                  : '当前将基于整本内容进行反向生成，适合完整拆书但耗时可能更长。'}
+              </Text>
+            </Space>
+          </Card>
+
           <Alert
             type="info"
             showIcon
@@ -713,7 +755,7 @@ export default function BookImport() {
             }
           />
           
-          <Space>
+          <Space wrap>
             <Button
               type="primary"
               icon={<PlayCircleOutlined />}
