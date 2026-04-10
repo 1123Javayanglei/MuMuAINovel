@@ -48,6 +48,8 @@ type BookImportPageCache = {
   applyMessage: string;
   applyError: string | null;
   isApplyComplete: boolean;
+  extractMode: BookImportExtractMode;
+  tailChapterCount: number;
   cachedAt: number;
 };
 
@@ -173,6 +175,16 @@ export default function BookImport() {
     retrying,
   ]);
 
+  const normalizedTailChapterCount = useMemo(
+    () => Math.max(5, Math.ceil(tailChapterCount / 5) * 5),
+    [tailChapterCount]
+  );
+  const effectiveExtractMode = useMemo<BookImportExtractMode>(
+    () => (normalizedTailChapterCount > 50 ? 'full' : extractMode),
+    [extractMode, normalizedTailChapterCount]
+  );
+  const rangeLocked = Boolean(taskId || taskStatus || preview || creatingTask || applying || retrying);
+
   const stepItems = [
     { title: '上传文件' },
     { title: '解析中' },
@@ -198,6 +210,8 @@ export default function BookImport() {
         setApplyProgress(cache.applyProgress);
         setApplyError(cache.applyError);
         setIsApplyComplete(cache.isApplyComplete);
+        setExtractMode(cache.extractMode ?? 'tail');
+        setTailChapterCount(cache.tailChapterCount ?? 10);
         setApplyMessage(
           cache.applyMessage || (cache.applyProgress > 0 && !cache.isApplyComplete
             ? '已恢复页面缓存，请重新点击“确认导入”继续。'
@@ -242,6 +256,8 @@ export default function BookImport() {
       applyMessage,
       applyError,
       isApplyComplete,
+      extractMode,
+      tailChapterCount,
       cachedAt: Date.now(),
     });
   }, [
@@ -253,6 +269,8 @@ export default function BookImport() {
     applyMessage,
     applyError,
     isApplyComplete,
+    extractMode,
+    tailChapterCount,
   ]);
 
   useEffect(() => {
@@ -325,12 +343,12 @@ export default function BookImport() {
       setPreview(null);
       setTaskStatus(null);
 
-      const normalizedTailChapterCount = Math.max(5, Math.ceil(tailChapterCount / 5) * 5);
-      const normalizedExtractMode = normalizedTailChapterCount > 50 ? 'full' : extractMode;
+      setExtractMode(effectiveExtractMode);
+      setTailChapterCount(normalizedTailChapterCount);
 
       const response = await bookImportApi.createTask({
         file,
-        extract_mode: normalizedExtractMode,
+        extract_mode: effectiveExtractMode,
         tail_chapter_count: normalizedTailChapterCount,
       });
 
@@ -700,6 +718,14 @@ export default function BookImport() {
 
           <Card size="small" title="解析范围设置">
             <Space direction="vertical" style={{ width: '100%' }} size={12}>
+              {rangeLocked && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="当前任务的解析范围已锁定"
+                  description="拆书任务会按创建任务时的解析范围执行。若需修改范围，请点击上方“重新开始”后重新上传并解析。"
+                />
+              )}
               <Select
                 value={extractMode}
                 onChange={(value) => setExtractMode(value)}
@@ -708,6 +734,7 @@ export default function BookImport() {
                   { label: '整本反向生成', value: 'full' },
                 ]}
                 style={{ width: '100%' }}
+                disabled={rangeLocked}
               />
               <InputNumber
                 min={5}
@@ -715,17 +742,17 @@ export default function BookImport() {
                 step={5}
                 precision={0}
                 value={tailChapterCount}
-                disabled={extractMode !== 'tail'}
+                disabled={rangeLocked || extractMode !== 'tail'}
                 onChange={(value) => setTailChapterCount(typeof value === 'number' ? value : 10)}
                 addonBefore="末尾章节数"
                 style={{ width: '100%' }}
               />
               <Text type="secondary">
-                {extractMode === 'tail'
-                  ? tailChapterCount > 50
+                {effectiveExtractMode === 'tail'
+                  ? `当前将截取末 ${normalizedTailChapterCount} 章进行反向生成；章节数必须为 5 的倍数，最多 50 章。`
+                  : extractMode === 'tail' && tailChapterCount > 50
                     ? '当前输入已超过 50 章，将自动按整本拆处理。'
-                    : `当前将截取末 ${Math.max(5, Math.ceil(tailChapterCount / 5) * 5)} 章进行反向生成；章节数必须为 5 的倍数，最多 50 章。`
-                  : '当前将基于整本内容进行反向生成，适合完整拆书但耗时可能更长。'}
+                    : '当前将基于整本内容进行反向生成，适合完整拆书但耗时可能更长。'}
               </Text>
             </Space>
           </Card>
