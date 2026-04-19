@@ -200,12 +200,13 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 DEFAULT_AI_PROVIDER=openai
 DEFAULT_MODEL=gpt-4o-mini
 DEFAULT_TEMPERATURE=0.7
-DEFAULT_MAX_TOKENS=***
+DEFAULT_MAX_TOKENS=4096
 
 # 本地登录账号
-LOCAL_AUTH_USERNAME=***
-LOCAL_AUTH_PASSWORD=***
-LOCAL_AUTH_DISPLAY_NAME=***
+LOCAL_AUTH_ENABLED=True
+LOCAL_AUTH_USERNAME=admin
+LOCAL_AUTH_PASSWORD=admin123
+LOCAL_AUTH_DISPLAY_NAME=Admin
 ENVEOF
 # 替换占位符路径为实际 $HOME 路径
 sed -i "s|/data/data/com.termux/files/home|$HOME|g" "$BACKEND/.env"
@@ -214,11 +215,9 @@ echo "  ✅ .env 已创建"
 else
 echo "  ✅ .env 已存在，跳过"
 fi
-
-# 修复 DEFAULT_MAX_TOKENS 占位符 (*** 不是有效整数，会导致数据库迁移失败)
-sed -i "s|DEFAULT_MAX_TOKENS=\*\*\*|DEFAULT_MAX_TOKENS=4096|" "$BACKEND/.env"
 ) > "$LOG" 2>&1 &
 SPIN $! "修补中" "$LOG"
+
 
 # =============================================================================
 # 步骤 5: 安装 Python 依赖
