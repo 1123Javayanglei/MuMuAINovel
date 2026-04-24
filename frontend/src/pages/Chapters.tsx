@@ -1012,6 +1012,49 @@ export default function Chapters() {
     });
   };
 
+  const handleExportForPublishing = () => {
+    if (chapters.length === 0) {
+      message.warning('当前项目没有章节，无法导出');
+      return;
+    }
+
+    modal.confirm({
+      title: '📝 导出为发文引擎格式',
+      content: (
+        <div>
+          <p>确定要将《{currentProject.title}》导出为发文引擎专用格式吗？</p>
+          <div style={{ 
+            background: '#f5f5f5', 
+            padding: '12px', 
+            borderRadius: '4px',
+            marginTop: '8px',
+            fontSize: '12px'
+          }}>
+            <p style={{ margin: '4px 0' }}><strong>⚠️ 格式规范：</strong></p>
+            <ul style={{ margin: '4px 0', paddingLeft: '20px' }}>
+              <li>第一行：第X章 标题</li>
+              <li>标题后空一行</li>
+              <li>正文每段缩进两个全角空格</li>
+              <li>无额外内容（作者按、分割线等）</li>
+            </ul>
+          </div>
+        </div>
+      ),
+      centered: true,
+      okText: '确定导出',
+      cancelText: '取消',
+      width: 500,
+      onOk: () => {
+        try {
+          projectApi.exportProjectForPublishing(currentProject.id);
+          message.success('开始下载发文格式文件');
+        } catch {
+          message.error('导出失败，请重试');
+        }
+      },
+    });
+  };
+
   const handleShowAnalysis = (chapterId: string) => {
     setAnalysisChapterId(chapterId);
     setAnalysisVisible(true);
@@ -1951,6 +1994,17 @@ export default function Chapters() {
             size={isMobile ? 'middle' : 'middle'}
           >
             导出为TXT
+          </Button>
+          <Button
+            type="primary"
+            icon={<FileTextOutlined />}
+            onClick={handleExportForPublishing}
+            disabled={chapters.length === 0}
+            block={isMobile}
+            size={isMobile ? 'middle' : 'middle'}
+            style={{ background: token.colorSuccess, borderColor: token.colorSuccess }}
+          >
+            📝 发文引擎格式
           </Button>
         </Space>
       </div>

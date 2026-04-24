@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete
 from typing import List, AsyncGenerator, Dict, Any
 import json
+import asyncio
 
 from app.database import get_db
 from app.api.common import verify_project_access
@@ -920,6 +921,8 @@ async def _save_outlines(
     保存大纲到数据库（修复版：从structure中提取title和content保存到数据库）
     
     如果项目为one-to-one模式，同时自动创建对应的章节
+    
+    🔧 修复：确保 order_index 不重复
     """
     # 获取项目信息以确定outline_mode
     project_result = await db.execute(
@@ -927,24 +930,69 @@ async def _save_outlines(
     )
     project = project_result.scalar_one_or_none()
     
+    # 🔧 检查数据库中已有的最大 order_index
+    max_order_result = await db.execute(
+        select(func.max(Outline.order_index)).where(Outline.project_id == project_id)
+    )
+    existing_max_order = max_order_result.scalar() or 0
+    
     outlines = []
+    seen_orders = set()  # 跟踪本批次中已使用的 order_index
+    seen_titles = {}  # 🔧 跟踪已使用的标题，避免重复 {title: [order_indices]}
     
     for idx, chapter_data in enumerate(outline_data):
-        order_idx = chapter_data.get("chapter_number", start_index + idx)
+        # 🔧 优先使用 AI 返回的 chapter_number，否则使用计算值
+        ai_chapter_num = chapter_data.get("chapter_number")
         
-        # 🔧 修复：从structure中提取title和summary/content保存到数据库
+        if ai_chapter_num is not None:
+            order_idx = int(ai_chapter_num)
+        else:
+            order_idx = start_index + idx
+        
+        # 🔧 防止 order_index 重复
+        while order_idx in seen_orders or order_idx <= existing_max_order:
+            logger.warning(f"⚠️ 检测到重复的 order_index={order_idx}，自动调整为 {existing_max_order + len(seen_orders) + 1}")
+            order_idx = existing_max_order + len(seen_orders) + 1
+        
+        # 🔧 从structure中提取title
         chapter_title = chapter_data.get("title", f"第{order_idx}章")
+        original_title = chapter_title  # 保存原始标题用于日志
+        
+        # 🔧 检测标题重复并自动修正
+        if chapter_title in seen_titles:
+            # 标题已存在，添加序号区分
+            duplicate_count = len(seen_titles[chapter_title])
+            chapter_title = f"{chapter_title}（{duplicate_count + 1}）"
+            logger.warning(
+                f"⚠️ 检测到重复标题 '{original_title}' (order_index={order_idx})，"
+                f"自动修正为 '{chapter_title}'"
+            )
+            # 更新 chapter_data 中的 title
+            chapter_data["title"] = chapter_title
+            # 记录新标题
+            if chapter_title not in seen_titles:
+                seen_titles[chapter_title] = []
+            seen_titles[chapter_title].append(order_idx)
+        else:
+            # 首次出现该标题
+            seen_titles[chapter_title] = [order_idx]
+        
+        seen_orders.add(order_idx)
+        
+        # 🔧 从structure中提取summary/content
         chapter_content = chapter_data.get("summary") or chapter_data.get("content", "")
         
         outline = Outline(
             project_id=project_id,
-            title=chapter_title,  # 从JSON中提取title
-            content=chapter_content,  # 从JSON中提取summary或content
+            title=chapter_title,
+            content=chapter_content,
             structure=json.dumps(chapter_data, ensure_ascii=False),
             order_index=order_idx
         )
         db.add(outline)
         outlines.append(outline)
+        
+        logger.debug(f"✅ 保存大纲: order_index={order_idx}, title={chapter_title[:30]}")
     
     # 如果是one-to-one模式，自动创建章节
     if project and project.outline_mode == 'one-to-one':
@@ -1441,130 +1489,145 @@ async def continue_outline_generator(
                 user_ai_service.user_id = user_id
                 user_ai_service.db_session = db
             
+            # 🚀 方案B：串行生成（保证内容连贯性）
+            # 注意：虽然速度较慢，但能确保每章都能看到前面章节的内容
             yield await tracker.generating(
                 current_chars=0,
                 estimated_total=estimated_chars_per_batch,
-                message=f"🤖 调用AI生成第{str(batch_num + 1)}批..."
+                message=f"📝 逐章生成第{str(batch_num + 1)}批（{current_batch_size}章）..."
             )
             
-            # 使用标准续写提示词模板（简化版）
+            # 使用标准续写提示词模板
             template = await PromptService.get_template("OUTLINE_CONTINUE", user_id, db)
-            prompt = PromptService.format_prompt(
-                template,
-                # 基础信息
-                title=project.title,
-                theme=project.theme or "未设定",
-                genre=project.genre or "通用",
-                narrative_perspective=project.narrative_perspective or "第三人称",
-                time_period=project.world_time_period or "未设定",
-                location=project.world_location or "未设定",
-                atmosphere=project.world_atmosphere or "未设定",
-                rules=project.world_rules or "未设定",
-                # 上下文信息
-                recent_outlines=context['recent_outlines'],
-                characters_info=context['characters_info'],
-                # 续写参数
-                chapter_count=current_batch_size,
-                start_chapter=current_start_chapter,
-                end_chapter=current_start_chapter + current_batch_size - 1,
-                current_chapter_count=len(latest_outlines),
-                plot_stage_instruction=stage_instruction,
-                story_direction=data.get("story_direction", "自然延续"),
-                requirements=data.get("requirements", ""),
-                mcp_references=""
-            )
-            logger.debug(f" 续写提示词: {prompt}")
-            # 调用AI生成当前批次
             model_param = data.get("model")
             provider_param = data.get("provider")
             logger.info(f"=== 续写批次{batch_num + 1} AI调用参数 ===")
             logger.info(f"  provider参数: {provider_param}")
             logger.info(f"  model参数: {model_param}")
+            logger.info(f"  生成模式: 串行生成（保证上下文连贯）")
             
-            # 流式生成并累积文本
-            accumulated_text = ""
-            chunk_count = 0
-            
-            async for chunk in user_ai_service.generate_text_stream(
-                prompt=prompt,
-                provider=provider_param,
-                model=model_param
-            ):
-                chunk_count += 1
-                accumulated_text += chunk
+            # 📝 串行生成每一章
+            batch_results = []
+            for i in range(current_batch_size):
+                chapter_num = current_start_chapter + i
                 
-                # 发送内容块
-                yield await tracker.generating_chunk(chunk)
+                # 获取最新的大纲列表（包括本批次已生成的章节）
+                latest_result = await db.execute(
+                    select(Outline)
+                    .where(Outline.project_id == project_id)
+                    .order_by(Outline.order_index)
+                )
+                latest_outlines_current = latest_result.scalars().all()
                 
-                # 定期更新进度
-                if chunk_count % 10 == 0:
-                    yield await tracker.generating(
-                        current_chars=len(accumulated_text),
-                        estimated_total=estimated_chars_per_batch,
-                        message=f"📝 第{str(batch_num + 1)}/{str(total_batches)}批生成中"
-                    )
+                # 重新构建上下文（包含本批次已生成的章节）
+                context_current = await _build_outline_continue_context(
+                    project=project,
+                    latest_outlines=latest_outlines_current,
+                    characters=characters,
+                    chapter_count=1,
+                    plot_stage=data.get("plot_stage", "development"),
+                    story_direction=data.get("story_direction", "自然延续"),
+                    requirements=data.get("requirements", ""),
+                    db=db
+                )
                 
-                # 每20个块发送心跳
-                if chunk_count % 20 == 0:
-                    yield await tracker.heartbeat()
-            
-            yield await tracker.parsing(f"✅ 第{str(batch_num + 1)}批AI生成完成，正在解析...")
-            
-            # 提取内容
-            ai_content = accumulated_text
-            ai_response = {"content": ai_content}
-            
-            # 解析响应（带重试机制）
-            max_retries = 2
-            retry_count = 0
-            outline_data = None
-            
-            while retry_count <= max_retries:
+                logger.info(f"📖 生成第{chapter_num}章，当前已有{len(latest_outlines_current)}章大纲")
+                yield await tracker.generating(
+                    current_chars=i * 1000,
+                    estimated_total=estimated_chars_per_batch,
+                    message=f"📝 正在生成第{chapter_num}章 ({i+1}/{current_batch_size})..."
+                )
+                
+                # 为单个章节构建 prompt
+                single_prompt = PromptService.format_prompt(
+                    template,
+                    # 基础信息
+                    title=project.title,
+                    theme=project.theme or "未设定",
+                    genre=project.genre or "通用",
+                    narrative_perspective=project.narrative_perspective or "第三人称",
+                    time_period=project.world_time_period or "未设定",
+                    location=project.world_location or "未设定",
+                    atmosphere=project.world_atmosphere or "未设定",
+                    rules=project.world_rules or "未设定",
+                    # 上下文信息（动态更新）
+                    recent_outlines=context_current['recent_outlines'],
+                    characters_info=context_current['characters_info'],
+                    # 续写参数 - 每次只生成1章
+                    chapter_count=1,
+                    start_chapter=chapter_num,
+                    end_chapter=chapter_num,
+                    current_chapter_count=len(latest_outlines_current),
+                    plot_stage_instruction=stage_instruction,
+                    story_direction=data.get("story_direction", "自然延续"),
+                    requirements=data.get("requirements", ""),
+                    mcp_references=""
+                )
+                
+                # 调用AI生成
                 try:
-                    # 使用 raise_on_error=True，解析失败时抛出异常
-                    outline_data = _parse_ai_response(ai_content, raise_on_error=True)
-                    break  # 解析成功，跳出循环
+                    result = await user_ai_service.call_with_json_retry(
+                        prompt=single_prompt,
+                        max_retries=2,
+                        expected_type="array"
+                    )
+                    batch_results.append(result)
+                except Exception as e:
+                    logger.error(f"❌ 第{chapter_num}章生成失败: {e}")
+                    batch_results.append(e)
+            
+            # 处理结果
+            outline_data = []
+            failed_chapters = []
+            
+            for i, result in enumerate(batch_results):
+                chapter_num = current_start_chapter + i
+                
+                if isinstance(result, Exception):
+                    logger.error(f"❌ 第{chapter_num}章生成失败: {result}")
+                    failed_chapters.append(chapter_num)
+                    # 使用 fallback 大纲
+                    fallback_outline = {
+                        "title": f"第{chapter_num}章",
+                        "summary": "待补充",
+                        "content": "",
+                        "key_events": [],
+                        "character_development": "",
+                        "plot_progression": "",
+                        "chapter_number": chapter_num  # 🔧 确保包含章节号
+                    }
+                    outline_data.append(fallback_outline)
+                else:
+                    # 解析成功，提取第一个元素（因为是数组）
+                    chapter_outline = None
+                    if isinstance(result, list) and len(result) > 0:
+                        chapter_outline = result[0]
+                    elif isinstance(result, dict):
+                        chapter_outline = result
                     
-                except JSONParseError as e:
-                    retry_count += 1
-                    if retry_count > max_retries:
-                        # 超过最大重试次数，使用fallback数据
-                        logger.error(f"❌ 第{batch_num + 1}批解析失败，已达最大重试次数({max_retries})，使用fallback数据")
-                        yield await tracker.warning(f"第{str(batch_num + 1)}批解析失败，使用备用数据")
-                        outline_data = _parse_ai_response(ai_content, raise_on_error=False)
-                        break
-                    
-                    logger.warning(f"⚠️ 第{batch_num + 1}批JSON解析失败（第{retry_count}次），正在重试...")
-                    yield await tracker.retry(retry_count, max_retries, f"第{str(batch_num + 1)}批解析失败")
-                    
-                    # 重试时重置生成进度
-                    tracker.reset_generating_progress()
-                    
-                    # 重新调用AI生成
-                    accumulated_text = ""
-                    chunk_count = 0
-                    
-                    # 在prompt中添加格式强调
-                    retry_prompt = prompt + "\n\n【重要提醒】请确保返回完整的JSON数组，不要截断。每个章节对象必须包含完整的title、summary等字段。"
-                    
-                    async for chunk in user_ai_service.generate_text_stream(
-                        prompt=retry_prompt,
-                        provider=provider_param,
-                        model=model_param
-                    ):
-                        chunk_count += 1
-                        accumulated_text += chunk
-                        
-                        # 发送内容块
-                        yield await tracker.generating_chunk(chunk)
-                        
-                        # 每20个块发送心跳
-                        if chunk_count % 20 == 0:
-                            yield await tracker.heartbeat()
-                    
-                    ai_content = accumulated_text
-                    ai_response = {"content": ai_content}
-                    logger.info(f"🔄 第{batch_num + 1}批重试生成完成，累计{len(ai_content)}字符")
+                    if chapter_outline:
+                        # 🔧 关键修复：确保每个大纲都有正确的 chapter_number
+                        chapter_outline["chapter_number"] = chapter_num
+                        outline_data.append(chapter_outline)
+                    else:
+                        logger.warning(f"⚠️ 第{chapter_num}章返回格式异常，使用fallback")
+                        outline_data.append({
+                            "title": f"第{chapter_num}章",
+                            "summary": "待补充",
+                            "content": "",
+                            "key_events": [],
+                            "character_development": "",
+                            "plot_progression": "",
+                            "chapter_number": chapter_num  # 🔧 确保包含章节号
+                        })
+            
+            # 记录失败情况
+            if failed_chapters:
+                yield await tracker.warning(
+                    f"第{str(batch_num + 1)}批中有 {len(failed_chapters)} 章生成失败（第{failed_chapters}章），已使用备用数据"
+                )
+            
+            yield await tracker.parsing(f"✅ 第{str(batch_num + 1)}批并发完成，正在整理...")
             
             # 保存当前批次的大纲
             batch_outlines = await _save_outlines(
@@ -1617,11 +1680,18 @@ async def continue_outline_generator(
             except Exception as e:
                 logger.error(f"⚠️ 第{batch_num + 1}批组织校验失败（不影响主流程）: {e}")
             
-            # 记录历史
+            # 记录历史（记录批次整体信息）
             history = GenerationHistory(
                 project_id=project_id,
-                prompt=f"[续写批次{batch_num + 1}/{total_batches}] {str(prompt)[:500]}",
-                generated_content=json.dumps(ai_response, ensure_ascii=False) if isinstance(ai_response, dict) else ai_response,
+                prompt=f"[续写批次{batch_num + 1}/{total_batches}] 并发生成{current_batch_size}章: 第{current_start_chapter}-{current_start_chapter + current_batch_size - 1}章",
+                generated_content=json.dumps({
+                    "batch_num": batch_num + 1,
+                    "chapter_count": current_batch_size,
+                    "start_chapter": current_start_chapter,
+                    "end_chapter": current_start_chapter + current_batch_size - 1,
+                    "failed_chapters": failed_chapters,
+                    "outlines_count": len(outline_data)
+                }, ensure_ascii=False),
                 model=data.get("model") or "default"
             )
             db.add(history)

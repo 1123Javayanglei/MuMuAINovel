@@ -383,6 +383,11 @@ export const projectApi = {
     window.open(`/api/projects/${id}/export`, '_blank');
   },
 
+  // 导出为发文引擎格式
+  exportProjectForPublishing: (id: string) => {
+    window.open(`/api/projects/${id}/export-for-publishing`, '_blank');
+  },
+
   // 导出项目数据为JSON
   exportProjectData: async (id: string, options: {
     include_generation_history?: boolean;

@@ -53,6 +53,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        USE_CN_MIRROR: "true"
     image: mumujie/mumuainovel:latest
     container_name: mumuainovel
     depends_on:
@@ -121,6 +123,8 @@ services:
       - SESSION_EXPIRE_MINUTES=${SESSION_EXPIRE_MINUTES:-120}
       - SESSION_REFRESH_THRESHOLD_MINUTES=${SESSION_REFRESH_THRESHOLD_MINUTES:-30}
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # 允许容器访问主机上的服务（如 Ollama）
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s

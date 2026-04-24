@@ -13,7 +13,7 @@ class TxtParserService:
     """TXT 解析服务（规则优先）"""
 
     STRONG_CHAPTER_PATTERNS = [
-        re.compile(r"^第[一二三四五六七八九十百千万零〇两\d]+[章节回卷集部篇].*$"),
+        re.compile(r"^第[一二三四五六七八九十百千万零〇两\d]+[章节回卷集部篇话].*$"),
         re.compile(r"^chapter\s*\d+.*$", re.IGNORECASE),
         re.compile(r"^chap\.\s*\d+.*$", re.IGNORECASE),
     ]

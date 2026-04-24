@@ -387,27 +387,33 @@ async def export_project_chapters(
             raise HTTPException(status_code=404, detail="项目没有任何章节")
         
         txt_content = []
-        
+                
         for idx, chapter in enumerate(chapters):
             chapter_title = (chapter.title or "").strip() or f"未命名章节{chapter.chapter_number}"
             raw_content = (chapter.content or "").strip()
+                    
+            # 📝 严格遵循发文引擎格式规范
+            # 1. 第一行必须是：第X章 标题
+            txt_content.append(f"第{chapter.chapter_number}章 {chapter_title}")
+                    
+            # 2. 标题后必须空一行
+            txt_content.append("")
+                    
+            # 3. 正文内容（每段首行缩进两个全角空格）
             if raw_content:
                 formatted_lines = []
                 for line in raw_content.splitlines():
                     stripped_line = line.strip()
                     if stripped_line:
-                        formatted_lines.append(f"　　{stripped_line}")
+                        formatted_lines.append(f"\u3000\u3000{stripped_line}")  # 全角空格缩进
                     else:
                         formatted_lines.append("")
                 chapter_content = "\n".join(formatted_lines)
+                txt_content.append(chapter_content)
             else:
-                chapter_content = "　　（本章暂无内容）"
-            
-            # 使用拆书强匹配可稳定识别的章节标题格式：第X章 标题
-            txt_content.append(f"第{chapter.chapter_number}章 {chapter_title}")
-            txt_content.append(chapter_content)
-            
-            # 章节之间只保留一个空行，避免装饰性分割线干扰拆书识别
+                txt_content.append("\u3000\u3000（本章暂无内容）")
+                    
+            # 4. 章节之间只保留一个空行
             if idx < len(chapters) - 1:
                 txt_content.append("")
         
@@ -434,6 +440,111 @@ async def export_project_chapters(
         raise
     except Exception as e:
         logger.error(f"导出项目失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")
+
+
+@router.get("/{project_id}/export-for-publishing", summary="导出项目章节为发文引擎格式TXT")
+async def export_project_for_publishing(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    request: Request = None
+):
+    """
+    导出项目章节为发文引擎专用格式
+    
+    ⚠️ 严格遵循发文引擎格式规范：
+    1. 每个txt文件第一行必须是：第X章 标题
+    2. 标题和正文之间必须空一行
+    3. 不能有任何额外内容（如作者按、分割线等）
+    4. 每段首行缩进两个全角空格
+    """
+    try:
+        # 从认证中间件获取用户ID
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            logger.warning("未登录用户尝试导出项目")
+            raise HTTPException(status_code=401, detail="未登录")
+        
+        logger.info(f"开始导出项目（发文引擎格式）: project_id={project_id}, user_id={user_id}")
+        
+        # 只查询当前用户的项目
+        result = await db.execute(
+            select(Project).where(
+                Project.id == project_id,
+                Project.user_id == user_id
+            )
+        )
+        project = result.scalar_one_or_none()
+        
+        if not project:
+            logger.warning(f"项目不存在或无权访问: project_id={project_id}, user_id={user_id}")
+            raise HTTPException(status_code=404, detail="项目不存在")
+        
+        chapters_result = await db.execute(
+            select(Chapter)
+            .where(Chapter.project_id == project_id)
+            .order_by(Chapter.chapter_number)
+        )
+        chapters = chapters_result.scalars().all()
+        
+        if not chapters:
+            logger.warning(f"项目没有章节: {project_id}")
+            raise HTTPException(status_code=404, detail="项目没有任何章节")
+        
+        txt_content = []
+        
+        for idx, chapter in enumerate(chapters):
+            chapter_title = (chapter.title or "").strip() or f"未命名章节{chapter.chapter_number}"
+            raw_content = (chapter.content or "").strip()
+            
+            # 📝 严格遵循发文引擎格式规范
+            # 1. 第一行必须是：第X章 标题
+            txt_content.append(f"第{chapter.chapter_number}章 {chapter_title}")
+            
+            # 2. 标题后必须空一行
+            txt_content.append("")
+            
+            # 3. 正文内容（每段首行缩进两个全角空格）
+            if raw_content:
+                formatted_lines = []
+                for line in raw_content.splitlines():
+                    stripped_line = line.strip()
+                    if stripped_line:
+                        formatted_lines.append(f"\u3000\u3000{stripped_line}")  # 全角空格缩进
+                    else:
+                        formatted_lines.append("")
+                chapter_content = "\n".join(formatted_lines)
+                txt_content.append(chapter_content)
+            else:
+                txt_content.append("\u3000\u3000（本章暂无内容）")
+            
+            # 4. 章节之间只保留一个空行
+            if idx < len(chapters) - 1:
+                txt_content.append("")
+        
+        final_content = "\n".join(txt_content)
+        
+        safe_title = "".join(c for c in (project.title or "未命名项目") if c.isalnum() or c in (' ', '-', '_', '，', '。', '、'))
+        filename = f"{safe_title}_发文格式.txt"
+        
+        from urllib.parse import quote
+        encoded_filename = quote(filename)
+        
+        logger.info(f"发文引擎格式导出成功: {filename}, 共{len(chapters)}章, {len(final_content)}字符")
+        
+        return Response(
+            content=final_content.encode('utf-8'),
+            media_type="text/plain; charset=utf-8",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}",
+                "Content-Type": "text/plain; charset=utf-8"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"发文引擎格式导出失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")
 
 

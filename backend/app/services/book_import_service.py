@@ -632,7 +632,14 @@ class BookImportService:
         except asyncio.CancelledError:
             self._set_task_state(task, status="cancelled", progress=task.progress, message="任务已取消")
         except Exception as exc:
-            logger.error(f"拆书任务失败 task_id={task_id}: {exc}", exc_info=True)
+            import traceback
+            import sys
+            error_traceback = traceback.format_exc()
+            logger.error(f"拆书任务失败 task_id={task_id}: {exc}")
+            logger.error(f"完整堆栈:\n{error_traceback}")
+            # 同时输出到stdout以确保能看到
+            print(f"DEBUG ERROR: {exc}", file=sys.stderr, flush=True)
+            print(f"DEBUG TRACEBACK:\n{error_traceback}", file=sys.stderr, flush=True)
             self._set_task_state(
                 task,
                 status="failed",
@@ -1015,6 +1022,8 @@ class BookImportService:
         task_id: str,
         chapters_data: list[dict],
     ) -> BookImportPreviewResponse:
+        logger.info(f"开始构建预览，章节数: {len(chapters_data)}")
+        
         suggestion = ProjectSuggestion(
             title=Path(filename).stem[:200] or "拆书导入项目",
             description="由拆书功能自动生成，可在导入前修改",
@@ -1027,106 +1036,117 @@ class BookImportService:
         chapters: list[BookImportChapter] = []
         warnings: list[BookImportWarning] = []
 
-        selected_chapters_raw, was_trimmed = self._select_raw_chapters_for_preview(
-            chapters_data=chapters_data,
-            extract_mode=task.extract_mode,
-            tail_chapter_count=task.tail_chapter_count,
-        )
-        selected_total = len(selected_chapters_raw)
-        selection_label = self._get_extract_mode_label(task.extract_mode, selected_total)
-
-        title_counter: Counter[str] = Counter()
-        for idx, chapter in enumerate(selected_chapters_raw, start=1):
-            raw_title = (chapter.get("title") or f"第{idx}章").strip()[:200]
-            title = self._strip_chapter_prefix(raw_title)[:200]
-            content = (chapter.get("content") or "").strip()
-            summary = self._build_summary(content)
-
-            chapters.append(
-                BookImportChapter(
-                    title=title,
-                    content=content,
-                    summary=summary,
-                    chapter_number=idx,
-                    outline_title=title,
-                )
+        try:
+            selected_chapters_raw, was_trimmed = self._select_raw_chapters_for_preview(
+                chapters_data=chapters_data,
+                extract_mode=task.extract_mode,
+                tail_chapter_count=task.tail_chapter_count,
             )
+            logger.info(f"章节筛选完成，选中 {len(selected_chapters_raw)} 章")
+            selected_total = len(selected_chapters_raw)
+            selection_label = self._get_extract_mode_label(task.extract_mode, selected_total)
 
-            title_counter[title] += 1
-            if len(content) < 300:
-                warnings.append(
-                    BookImportWarning(
-                        code="chapter_too_short",
-                        message=f"章节「{title}」内容较短，建议检查切分结果",
-                        level="warning",
+            title_counter: Counter[str] = Counter()
+            for idx, chapter in enumerate(selected_chapters_raw, start=1):
+                try:
+                    logger.debug(f"处理第 {idx} 章")
+                    raw_title = str(chapter.get("title") or f"第{idx}章").strip()[:200]
+                    title = self._strip_chapter_prefix(raw_title)[:200]
+                    content = str(chapter.get("content") or "").strip()
+                    summary = self._build_summary(content)
+                    logger.debug(f"第 {idx} 章处理完成: title={title[:50]}, content_len={len(content)}")
+
+                    chapters.append(
+                        BookImportChapter(
+                            title=title,
+                            content=content,
+                            summary=summary,
+                            chapter_number=idx,
+                            outline_title=title,
+                        )
                     )
-                )
-            if len(content) > 12000:
+
+                    title_counter[title] += 1
+                    if len(content) < 300:
+                        warnings.append(
+                            BookImportWarning(
+                                code="chapter_too_short",
+                                message=f"章节「{title}」内容较短，建议检查切分结果",
+                                level="warning",
+                            )
+                        )
+                    if len(content) > 12000:
+                        warnings.append(
+                            BookImportWarning(
+                                code="chapter_too_long",
+                                message=f"章节「{title}」内容较长，建议确认是否应继续拆分",
+                                level="info",
+                            )
+                        )
+
+                    # 章节构建进度：18% -> 20%（在这个区间内按比例推进）
+                    chapter_progress = 18 + int(2 * idx / max(1, selected_total))
+                    if idx % max(1, selected_total // 5) == 0 or idx == selected_total:
+                        self._set_task_state(
+                            task,
+                            status="running",
+                            progress=chapter_progress,
+                            message=f"已处理{selection_label} {idx}/{selected_total} 个章节结构...",
+                        )
+                except Exception as chapter_err:
+                    logger.error(f"处理第 {idx} 章失败: {chapter_err}", exc_info=True)
+                    raise
+
+            for title, count in title_counter.items():
+                if count > 1:
+                    warnings.append(
+                        BookImportWarning(
+                            code="duplicate_chapter_title",
+                            message=f"检测到重复章节标题「{title}」共 {count} 次",
+                            level="warning",
+                        )
+                    )
+
+            if was_trimmed:
                 warnings.append(
                     BookImportWarning(
-                        code="chapter_too_long",
-                        message=f"章节「{title}」内容较长，建议确认是否应继续拆分",
+                        code="trimmed_for_extract_mode",
+                        message=f"已按解析配置仅保留{selection_label} {selected_total} 章用于导入（原始识别 {len(chapters_data)} 章）",
                         level="info",
                     )
                 )
 
-            # 章节构建进度：18% -> 20%（在这个区间内按比例推进）
-            chapter_progress = 18 + int(2 * idx / max(1, selected_total))
-            if idx % max(1, selected_total // 5) == 0 or idx == selected_total:
-                self._set_task_state(
-                    task,
-                    status="running",
-                    progress=chapter_progress,
-                    message=f"已处理{selection_label} {idx}/{selected_total} 个章节结构...",
-                )
-
-        for title, count in title_counter.items():
-            if count > 1:
-                warnings.append(
-                    BookImportWarning(
-                        code="duplicate_chapter_title",
-                        message=f"检测到重复章节标题「{title}」共 {count} 次",
-                        level="warning",
-                    )
-                )
-
-        if was_trimmed:
-            warnings.append(
-                BookImportWarning(
-                    code="trimmed_for_extract_mode",
-                    message=f"已按解析配置仅保留{selection_label} {selected_total} 章用于导入（原始识别 {len(chapters_data)} 章）",
-                    level="info",
-                )
+            # AI 反向生成项目信息：进度 20% -> 95%
+            self._set_task_state(
+                task,
+                status="running",
+                progress=20,
+                message="正在调用AI反向生成项目信息（标题/简介/主题/类型）...",
+            )
+            suggestion = await self._generate_reverse_project_suggestion(
+                user_id=task.user_id,
+                suggestion=suggestion,
+                chapters=chapters,
+                task=task,
             )
 
-        # AI 反向生成项目信息：进度 20% -> 95%
-        self._set_task_state(
-            task,
-            status="running",
-            progress=20,
-            message="正在调用AI反向生成项目信息（标题/简介/主题/类型）...",
-        )
-        suggestion = await self._generate_reverse_project_suggestion(
-            user_id=task.user_id,
-            suggestion=suggestion,
-            chapters=chapters,
-            task=task,
-        )
+            outlines = await self._generate_reverse_outlines(
+                user_id=task.user_id,
+                suggestion=suggestion,
+                chapters=chapters,
+                task=task,
+            )
 
-        outlines = await self._generate_reverse_outlines(
-            user_id=task.user_id,
-            suggestion=suggestion,
-            chapters=chapters,
-            task=task,
-        )
-
-        return BookImportPreviewResponse(
-            task_id=task_id,
-            project_suggestion=suggestion,
-            chapters=chapters,
-            outlines=outlines,
-            warnings=warnings,
-        )
+            return BookImportPreviewResponse(
+                task_id=task_id,
+                project_suggestion=suggestion,
+                chapters=chapters,
+                outlines=outlines,
+                warnings=warnings,
+            )
+        except Exception as e:
+            logger.error(f"构建预览失败，章节数: {len(chapters_data)}, 错误: {e}", exc_info=True)
+            raise
 
     async def _generate_reverse_project_suggestion(
         self,
@@ -1221,9 +1241,9 @@ class BookImportService:
 
                 result = ProjectSuggestion(
                     title=suggestion.title,
-                    description=(project_data.get("description") or fallback.description or "").strip(),
-                    theme=(project_data.get("theme") or fallback.theme or "").strip() or fallback.theme,
-                    genre=(project_data.get("genre") or fallback.genre or "").strip() or fallback.genre,
+                    description=str(project_data.get("description") or fallback.description or "").strip(),
+                    theme=str(project_data.get("theme") or fallback.theme or "").strip() or fallback.theme,
+                    genre=str(project_data.get("genre") or fallback.genre or "").strip() or fallback.genre,
                     narrative_perspective=self._extract_narrative_perspective(
                         project_data,
                         fallback.narrative_perspective,
@@ -1354,8 +1374,8 @@ class BookImportService:
     def _build_reverse_outline_chapters_text(self, chapters: list[BookImportChapter]) -> str:
         parts: list[str] = []
         for chapter in chapters:
-            summary = (chapter.summary or "").strip()
-            excerpt = (chapter.content or "").strip()[:2200]
+            summary = str(chapter.summary or "").strip()
+            excerpt = str(chapter.content or "").strip()[:2200]
             parts.append(
                 f"【第{chapter.chapter_number}章 {chapter.title}】\n"
                 f"章节摘要：{summary or '无'}\n"
@@ -1435,7 +1455,8 @@ class BookImportService:
         }
 
     def _build_fallback_outline_structure(self, chapter: BookImportChapter) -> dict[str, Any]:
-        summary = (chapter.summary or self._build_summary(chapter.content or "")).strip()
+        summary_raw = chapter.summary or self._build_summary(chapter.content or "")
+        summary = str(summary_raw or "").strip()
         if not summary:
             summary = "本章围绕主要人物与核心冲突推进剧情。"
 
@@ -1960,7 +1981,7 @@ class BookImportService:
             if not isinstance(item, dict):
                 continue
 
-            raw_name = (item.get("name") or "").strip()
+            raw_name = str(item.get("name") or "").strip()
             if not raw_name or raw_name in existing_names:
                 continue
 
@@ -2035,7 +2056,7 @@ class BookImportService:
                     continue
 
                 # 主职业
-                main_name = (assignment.get("main_career") or "").strip()
+                main_name = str(assignment.get("main_career") or "").strip()
                 if main_name and main_name in main_career_map:
                     main_career = main_career_map[main_name]
                     main_stage = max(1, min(_to_int(assignment.get("main_stage", 1), 1), max(main_career.max_stage or 1, 1)))
@@ -2064,7 +2085,7 @@ class BookImportService:
                 for sub in sub_list[:2]:
                     if not isinstance(sub, dict):
                         continue
-                    sub_name = (sub.get("career") or "").strip()
+                    sub_name = str(sub.get("career") or "").strip()
                     if not sub_name or sub_name not in sub_career_map:
                         continue
 
@@ -2221,9 +2242,9 @@ class BookImportService:
         await db.flush()
         return created
 
-    def _build_summary(self, content: str, max_len: int = 120) -> Optional[str]:
+    def _build_summary(self, content: str, max_len: int = 120) -> str:
         if not content:
-            return None
+            return ""
         normalized = re.sub(r"\s+", " ", content).strip()
         if len(normalized) <= max_len:
             return normalized

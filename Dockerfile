@@ -55,16 +55,18 @@ RUN apt-get update && apt-get install -y \
     gcc \
     postgresql-client \
     netcat-traditional \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制后端依赖文件
 COPY backend/requirements.txt ./
 
 # 安装 Python 依赖（包含 torch，避免单独安装造成重复层）
+# 使用 --cache-dir 启用 pip 缓存，加速后续构建
 RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
-        pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/; \
+        pip install --timeout=300 --retries=10 -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple; \
     else \
-        pip install --no-cache-dir -r requirements.txt; \
+        pip install -r requirements.txt; \
     fi
 
 # 创建embedding目录
@@ -73,16 +75,15 @@ RUN mkdir -p /app/embedding
 # 设置 Sentence-Transformers 缓存目录
 ENV SENTENCE_TRANSFORMERS_HOME=/app/embedding
 
-# 下载 embedding 模型（从 HuggingFace）
-# 使用 Python 脚本预下载模型，这样运行时不需要网络
-RUN python -c "\
-from sentence_transformers import SentenceTransformer; \
-import os; \
-os.environ['SENTENCE_TRANSFORMERS_HOME'] = '/app/embedding'; \
-print('Downloading sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2...'); \
-model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'); \
-print('Model downloaded successfully!'); \
-"
+# 复制预下载的 embedding 模型
+COPY embedding.zip /tmp/embedding.zip
+RUN cd /tmp && unzip embedding.zip && \
+    if [ -d "/tmp/embedding" ]; then \
+        mv /tmp/embedding/* /app/embedding/ && rm -rf /tmp/embedding; \
+    else \
+        mv /tmp/models-* /app/embedding/ 2>/dev/null || true; \
+    fi && \
+    rm /tmp/embedding.zip
 
 # 复制后端代码（不包含embedding，因为已经下载了）
 COPY backend/ ./
