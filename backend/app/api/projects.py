@@ -443,29 +443,176 @@ async def export_project_chapters(
         raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")
 
 
-@router.get("/{project_id}/export-for-publishing", summary="导出项目章节为发文引擎格式TXT")
-async def export_project_for_publishing(
+@router.post("/{project_id}/export-outlines-for-publishing", summary="导出指定大纲章节为发文引擎格式ZIP")
+async def export_outlines_for_publishing(
     project_id: str,
+    request_data: dict,
     db: AsyncSession = Depends(get_db),
     request: Request = None
 ):
     """
-    导出项目章节为发文引擎专用格式
+    导出指定大纲的章节为发文引擎专用格式（ZIP压缩包）
+    
+    请求体：
+    {
+        "outline_ids": ["id1", "id2", ...]  # 要导出的大纲ID列表
+    }
     
     ⚠️ 严格遵循发文引擎格式规范：
-    1. 每个txt文件第一行必须是：第X章 标题
-    2. 标题和正文之间必须空一行
-    3. 不能有任何额外内容（如作者按、分割线等）
-    4. 每段首行缩进两个全角空格
+    - 每章一个独立TXT文件
+    - 文件名格式：XXX 第X章.txt（XXX为3位序号）
+    - 目录结构：书名/
+    - 文件内容：第一行第X章 标题，空一行，正文
     """
     try:
+        import zipfile
+        import io
+        from datetime import datetime
+        
         # 从认证中间件获取用户ID
         user_id = getattr(request.state, 'user_id', None)
         if not user_id:
             logger.warning("未登录用户尝试导出项目")
             raise HTTPException(status_code=401, detail="未登录")
         
-        logger.info(f"开始导出项目（发文引擎格式）: project_id={project_id}, user_id={user_id}")
+        outline_ids = request_data.get("outline_ids", [])
+        if not outline_ids:
+            raise HTTPException(status_code=400, detail="请至少选择一个大纲")
+        
+        logger.info(f"开始导出大纲（发文引擎ZIP格式）: project_id={project_id}, outline_count={len(outline_ids)}, user_id={user_id}")
+        
+        # 只查询当前用户的项目
+        result = await db.execute(
+            select(Project).where(
+                Project.id == project_id,
+                Project.user_id == user_id
+            )
+        )
+        project = result.scalar_one_or_none()
+        
+        if not project:
+            logger.warning(f"项目不存在或无权访问: project_id={project_id}, user_id={user_id}")
+            raise HTTPException(status_code=404, detail="项目不存在")
+        
+        # 查询指定大纲下的所有章节
+        chapters_result = await db.execute(
+            select(Chapter)
+            .where(
+                Chapter.project_id == project_id,
+                Chapter.outline_id.in_(outline_ids)
+            )
+            .order_by(Chapter.chapter_number)
+        )
+        chapters = chapters_result.scalars().all()
+        
+        if not chapters:
+            logger.warning(f"选中的大纲下没有章节: {outline_ids}")
+            raise HTTPException(status_code=404, detail="选中的大纲下没有任何章节")
+        
+        # 创建ZIP文件
+        zip_buffer = io.BytesIO()
+        
+        # 安全的书名（用于目录名）
+        safe_title = "".join(c for c in (project.title or "未命名项目") if c.isalnum() or c in (' ', '-', '_', '，', '。', '、'))
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # 为每一章创建独立的TXT文件
+            for chapter in chapters:
+                chapter_title = (chapter.title or "").strip() or f"未命名章节{chapter.chapter_number}"
+                raw_content = (chapter.content or "").strip()
+                
+                # 📝 构建单章文件内容
+                chapter_lines = []
+                
+                # 1. 第一行：第X章 标题
+                chapter_lines.append(f"第{chapter.chapter_number}章 {chapter_title}")
+                
+                # 2. 空一行
+                chapter_lines.append("")
+                
+                # 3. 正文内容
+                if raw_content:
+                    formatted_lines = []
+                    for line in raw_content.splitlines():
+                        stripped_line = line.strip()
+                        if stripped_line:
+                            formatted_lines.append(f"\u3000\u3000{stripped_line}")  # 全角空格缩进
+                        else:
+                            formatted_lines.append("")
+                    chapter_content = "\n".join(formatted_lines)
+                    chapter_lines.append(chapter_content)
+                else:
+                    chapter_lines.append("\u3000\u3000（本章暂无内容）")
+                
+                final_content = "\n".join(chapter_lines)
+                
+                # 4. 生成文件名：XXX 第X章.txt（XXX为3位序号，不足补0）
+                chapter_num_str = str(chapter.chapter_number).zfill(3)
+                filename = f"{chapter_num_str} 第{chapter.chapter_number}章.txt"
+                
+                # 5. ZIP中的路径：书名/文件名（去掉chapters目录）
+                zip_path = f"{safe_title}/{filename}"
+                
+                # 写入ZIP文件
+                zip_file.writestr(zip_path, final_content.encode('utf-8'))
+                
+                logger.info(f"  已添加: {zip_path}")
+        
+        # 生成ZIP文件名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        zip_filename = f"{safe_title}_发文格式_{timestamp}.zip"
+        
+        from urllib.parse import quote
+        encoded_filename = quote(zip_filename)
+        
+        zip_buffer.seek(0)
+        zip_size = len(zip_buffer.getvalue())
+        
+        logger.info(f"发文引擎ZIP导出成功: {zip_filename}, 共{len(chapters)}章, {zip_size}字节")
+        
+        return Response(
+            content=zip_buffer.getvalue(),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}",
+                "Content-Type": "application/zip"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"发文引擎ZIP导出失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")
+
+
+@router.get("/{project_id}/export-for-publishing", summary="导出项目章节为发文引擎格式ZIP")
+async def export_project_for_publishing(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    request: Request = None
+):
+    """
+    导出项目章节为发文引擎专用格式（ZIP压缩包）
+    
+    ⚠️ 严格遵循发文引擎格式规范：
+    - 每章一个独立TXT文件
+    - 文件名格式：XXX 第X章.txt（XXX为3位序号）
+    - 目录结构：chapters/书名/
+    - 文件内容：第一行第X章 标题，空一行，正文
+    """
+    try:
+        import zipfile
+        import io
+        from datetime import datetime
+        
+        # 从认证中间件获取用户ID
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            logger.warning("未登录用户尝试导出项目")
+            raise HTTPException(status_code=401, detail="未登录")
+        
+        logger.info(f"开始导出项目（发文引擎ZIP格式）: project_id={project_id}, user_id={user_id}")
         
         # 只查询当前用户的项目
         result = await db.execute(
@@ -491,60 +638,80 @@ async def export_project_for_publishing(
             logger.warning(f"项目没有章节: {project_id}")
             raise HTTPException(status_code=404, detail="项目没有任何章节")
         
-        txt_content = []
+        # 创建ZIP文件
+        zip_buffer = io.BytesIO()
         
-        for idx, chapter in enumerate(chapters):
-            chapter_title = (chapter.title or "").strip() or f"未命名章节{chapter.chapter_number}"
-            raw_content = (chapter.content or "").strip()
-            
-            # 📝 严格遵循发文引擎格式规范
-            # 1. 第一行必须是：第X章 标题
-            txt_content.append(f"第{chapter.chapter_number}章 {chapter_title}")
-            
-            # 2. 标题后必须空一行
-            txt_content.append("")
-            
-            # 3. 正文内容（每段首行缩进两个全角空格）
-            if raw_content:
-                formatted_lines = []
-                for line in raw_content.splitlines():
-                    stripped_line = line.strip()
-                    if stripped_line:
-                        formatted_lines.append(f"\u3000\u3000{stripped_line}")  # 全角空格缩进
-                    else:
-                        formatted_lines.append("")
-                chapter_content = "\n".join(formatted_lines)
-                txt_content.append(chapter_content)
-            else:
-                txt_content.append("\u3000\u3000（本章暂无内容）")
-            
-            # 4. 章节之间只保留一个空行
-            if idx < len(chapters) - 1:
-                txt_content.append("")
-        
-        final_content = "\n".join(txt_content)
-        
+        # 安全的书名（用于目录名）
         safe_title = "".join(c for c in (project.title or "未命名项目") if c.isalnum() or c in (' ', '-', '_', '，', '。', '、'))
-        filename = f"{safe_title}_发文格式.txt"
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # 为每一章创建独立的TXT文件
+            for chapter in chapters:
+                chapter_title = (chapter.title or "").strip() or f"未命名章节{chapter.chapter_number}"
+                raw_content = (chapter.content or "").strip()
+                
+                # 📝 构建单章文件内容
+                chapter_lines = []
+                
+                # 1. 第一行：第X章 标题
+                chapter_lines.append(f"第{chapter.chapter_number}章 {chapter_title}")
+                
+                # 2. 空一行
+                chapter_lines.append("")
+                
+                # 3. 正文内容
+                if raw_content:
+                    formatted_lines = []
+                    for line in raw_content.splitlines():
+                        stripped_line = line.strip()
+                        if stripped_line:
+                            formatted_lines.append(f"\u3000\u3000{stripped_line}")  # 全角空格缩进
+                        else:
+                            formatted_lines.append("")
+                    chapter_content = "\n".join(formatted_lines)
+                    chapter_lines.append(chapter_content)
+                else:
+                    chapter_lines.append("\u3000\u3000（本章暂无内容）")
+                
+                final_content = "\n".join(chapter_lines)
+                
+                # 4. 生成文件名：XXX 第X章.txt（XXX为3位序号，不足补0）
+                chapter_num_str = str(chapter.chapter_number).zfill(3)
+                filename = f"{chapter_num_str} 第{chapter.chapter_number}章.txt"
+                
+                # 5. ZIP中的路径：书名/文件名（去掉chapters目录）
+                zip_path = f"{safe_title}/{filename}"
+                
+                # 写入ZIP文件
+                zip_file.writestr(zip_path, final_content.encode('utf-8'))
+                
+                logger.info(f"  已添加: {zip_path}")
+        
+        # 生成ZIP文件名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        zip_filename = f"{safe_title}_发文格式_{timestamp}.zip"
         
         from urllib.parse import quote
-        encoded_filename = quote(filename)
+        encoded_filename = quote(zip_filename)
         
-        logger.info(f"发文引擎格式导出成功: {filename}, 共{len(chapters)}章, {len(final_content)}字符")
+        zip_buffer.seek(0)
+        zip_size = len(zip_buffer.getvalue())
+        
+        logger.info(f"发文引擎ZIP导出成功: {zip_filename}, 共{len(chapters)}章, {zip_size}字节")
         
         return Response(
-            content=final_content.encode('utf-8'),
-            media_type="text/plain; charset=utf-8",
+            content=zip_buffer.getvalue(),
+            media_type="application/zip",
             headers={
                 "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}",
-                "Content-Type": "text/plain; charset=utf-8"
+                "Content-Type": "application/zip"
             }
         )
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"发文引擎格式导出失败: {str(e)}", exc_info=True)
+        logger.error(f"发文引擎ZIP导出失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")
 
 

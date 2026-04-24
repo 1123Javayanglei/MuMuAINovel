@@ -383,9 +383,39 @@ export const projectApi = {
     window.open(`/api/projects/${id}/export`, '_blank');
   },
 
-  // 导出为发文引擎格式
-  exportProjectForPublishing: (id: string) => {
-    window.open(`/api/projects/${id}/export-for-publishing`, '_blank');
+  // 导出指定大纲为发文引擎格式（POST请求）
+  exportOutlinesForPublishing: async (projectId: string, outlineIds: string[]) => {
+    const response = await axios.post(
+      `/api/projects/${projectId}/export-outlines-for-publishing`,
+      { outline_ids: outlineIds },
+      {
+        responseType: 'blob',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    
+    // 创建下载链接
+    const url = window.URL.createObjectURL(new Blob([response.data]));
+    const link = document.createElement('a');
+    link.href = url;
+    
+    // 从响应头获取文件名
+    const contentDisposition = response.headers['content-disposition'];
+    let filename = `export_${Date.now()}.zip`;
+    if (contentDisposition) {
+      const filenameMatch = contentDisposition.match(/filename\*=UTF-8''(.+)/);
+      if (filenameMatch && filenameMatch[1]) {
+        filename = decodeURIComponent(filenameMatch[1]);
+      }
+    }
+    
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
   },
 
   // 导出项目数据为JSON

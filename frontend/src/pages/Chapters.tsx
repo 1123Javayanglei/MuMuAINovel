@@ -3,7 +3,7 @@ import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge,
 import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { useChapterSync } from '../store/hooks';
-import { projectApi, writingStyleApi, chapterApi } from '../services/api';
+import { projectApi, writingStyleApi, chapterApi, outlineApi } from '../services/api';
 import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData } from '../types';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import ChapterAnalysis from '../components/ChapterAnalysis';
@@ -1012,47 +1012,133 @@ export default function Chapters() {
     });
   };
 
-  const handleExportForPublishing = () => {
-    if (chapters.length === 0) {
-      message.warning('当前项目没有章节，无法导出');
+  // ✅ 新增：导出番茄小说格式ZIP
+  const handleExportTomatoZip = async () => {
+    if (!currentProject?.id) {
+      message.warning('请先选择项目');
       return;
     }
 
-    modal.confirm({
-      title: '📝 导出为发文引擎格式',
-      content: (
-        <div>
-          <p>确定要将《{currentProject.title}》导出为发文引擎专用格式吗？</p>
-          <div style={{ 
-            background: '#f5f5f5', 
-            padding: '12px', 
-            borderRadius: '4px',
-            marginTop: '8px',
-            fontSize: '12px'
-          }}>
-            <p style={{ margin: '4px 0' }}><strong>⚠️ 格式规范：</strong></p>
-            <ul style={{ margin: '4px 0', paddingLeft: '20px' }}>
-              <li>第一行：第X章 标题</li>
-              <li>标题后空一行</li>
-              <li>正文每段缩进两个全角空格</li>
-              <li>无额外内容（作者按、分割线等）</li>
-            </ul>
+    // 获取该项目的所有大纲
+    try {
+      const outlinesList = await outlineApi.getOutlines(currentProject.id);
+      
+      if (outlinesList.length === 0) {
+        message.warning('当前项目没有大纲，请先创建大纲');
+        return;
+      }
+
+      modal.confirm({
+        title: '📝 导出番茄小说格式（ZIP）',
+        content: (
+          <div>
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center',
+              marginBottom: '12px'
+            }}>
+              <p style={{ margin: 0 }}>请选择要导出的大纲（可多选）：</p>
+              <Space size="small">
+                <Button 
+                  size="small"
+                  onClick={() => {
+                    const checkboxes = document.querySelectorAll<HTMLInputElement>('input[type="checkbox"][id^="outline-"]');
+                    checkboxes.forEach(cb => cb.checked = true);
+                  }}
+                >
+                  全选
+                </Button>
+                <Button 
+                  size="small"
+                  onClick={() => {
+                    const checkboxes = document.querySelectorAll<HTMLInputElement>('input[type="checkbox"][id^="outline-"]');
+                    checkboxes.forEach(cb => cb.checked = false);
+                  }}
+                >
+                  取消全选
+                </Button>
+              </Space>
+            </div>
+            <div style={{ 
+              maxHeight: '300px', 
+              overflowY: 'auto',
+              padding: '8px',
+              border: '1px solid #d9d9d9',
+              borderRadius: '4px'
+            }}>
+              {outlinesList.map((outline: any) => (
+                <div key={outline.id} style={{ 
+                  padding: '8px',
+                  borderBottom: '1px solid #f0f0f0',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}>
+                  <input
+                    type="checkbox"
+                    id={`outline-${outline.id}`}
+                    value={outline.id}
+                    defaultChecked={true}
+                    style={{ width: '16px', height: '16px' }}
+                  />
+                  <label htmlFor={`outline-${outline.id}`} style={{ cursor: 'pointer', flex: 1 }}>
+                    <strong>第{outline.order_index}卷</strong> {outline.title}
+                  </label>
+                </div>
+              ))}
+            </div>
+            <div style={{ 
+              background: '#f5f5f5', 
+              padding: '12px', 
+              borderRadius: '4px',
+              marginTop: '12px',
+              fontSize: '12px'
+            }}>
+              <p style={{ margin: '4px 0' }}><strong>⚠️ 导出说明：</strong></p>
+              <ul style={{ margin: '4px 0', paddingLeft: '20px' }}>
+                <li>每章一个独立TXT文件</li>
+                <li>文件名：XXX 第X章.txt（3位序号）</li>
+                <li>目录结构：书名/</li>
+                <li>文件格式：第一行第X章 标题，空一行，正文</li>
+              </ul>
+            </div>
           </div>
-        </div>
-      ),
-      centered: true,
-      okText: '确定导出',
-      cancelText: '取消',
-      width: 500,
-      onOk: () => {
-        try {
-          projectApi.exportProjectForPublishing(currentProject.id);
-          message.success('开始下载发文格式文件');
-        } catch {
-          message.error('导出失败，请重试');
-        }
-      },
-    });
+        ),
+        centered: true,
+        okText: '确定导出ZIP',
+        cancelText: '取消',
+        width: 600,
+        onOk: async () => {
+          try {
+            // 获取所有选中的大纲ID
+            const checkboxes = document.querySelectorAll<HTMLInputElement>('input[type="checkbox"][id^="outline-"]');
+            const selectedOutlineIds: string[] = [];
+            checkboxes.forEach(cb => {
+              if (cb.checked) {
+                selectedOutlineIds.push(cb.value);
+              }
+            });
+
+            if (selectedOutlineIds.length === 0) {
+              message.warning('请至少选择一个大纲');
+              throw new Error('No outlines selected');
+            }
+
+            await projectApi.exportOutlinesForPublishing(currentProject.id, selectedOutlineIds);
+            message.success('开始下载ZIP文件');
+          } catch (error: any) {
+            if (error.message !== 'No outlines selected') {
+              console.error('导出失败:', error);
+              message.error('导出失败，请重试');
+            }
+          }
+        },
+      });
+    } catch (error) {
+      console.error('获取大纲列表失败:', error);
+      message.error('获取大纲列表失败');
+    }
   };
 
   const handleShowAnalysis = (chapterId: string) => {
@@ -1998,13 +2084,12 @@ export default function Chapters() {
           <Button
             type="primary"
             icon={<FileTextOutlined />}
-            onClick={handleExportForPublishing}
-            disabled={chapters.length === 0}
+            onClick={handleExportTomatoZip}
             block={isMobile}
             size={isMobile ? 'middle' : 'middle'}
             style={{ background: token.colorSuccess, borderColor: token.colorSuccess }}
           >
-            📝 发文引擎格式
+            📝 导出番茄ZIP
           </Button>
         </Space>
       </div>
