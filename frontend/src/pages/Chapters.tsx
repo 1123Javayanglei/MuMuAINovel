@@ -587,7 +587,7 @@ export default function Chapters() {
   };
 
   // 按章节号排序并按大纲分组章节 (必须在早返回之前调用，避免违反 Hooks 规则)
-  const { sortedChapters } = useMemo(() => {
+  const { sortedChapters, groupedChapters } = useMemo(() => {
     const sorted = [...chapters].sort((a, b) => a.chapter_number - b.chapter_number);
 
     const groups: Record<string, {
@@ -612,7 +612,9 @@ export default function Chapters() {
       groups[key].chapters.push(chapter);
     });
 
-    return { sortedChapters: sorted };
+    const grouped = Object.values(groups).sort((a, b) => a.outlineOrder - b.outlineOrder);
+
+    return { sortedChapters: sorted, groupedChapters: grouped };
   }, [chapters]);
 
   // 章节查询过滤（前端过滤，减少渲染压力）
@@ -629,49 +631,69 @@ export default function Chapters() {
     });
   }, [sortedChapters, chapterSearchKeyword]);
 
-  // 分页后的扁平章节
+  // one-to-one 模式：分页后的扁平章节
   const pagedSortedChapters = useMemo(() => {
     const start = (chapterPage - 1) * chapterPageSize;
     return filteredSortedChapters.slice(start, start + chapterPageSize);
   }, [filteredSortedChapters, chapterPage, chapterPageSize]);
 
-  // one-to-many 模式分页后再按大纲分组
+  // one-to-many 模式：对大纲分组进行分页（确保同一大纲不被拆分）
   const pagedGroupedChapters = useMemo(() => {
-    const groups: Record<string, {
-      outlineId: string | null;
-      outlineTitle: string;
-      outlineOrder: number;
-      chapters: Chapter[];
-    }> = {};
-
-    pagedSortedChapters.forEach(chapter => {
-      const key = chapter.outline_id || 'uncategorized';
-      if (!groups[key]) {
-        groups[key] = {
-          outlineId: chapter.outline_id || null,
-          outlineTitle: chapter.outline_title || '未分类章节',
-          outlineOrder: chapter.outline_order ?? 999,
-          chapters: []
-        };
+    const start = (chapterPage - 1) * chapterPageSize;
+    const end = start + chapterPageSize;
+    
+    // 第一步：找到起始大纲索引
+    let accumulatedCount = 0;
+    let startIndex = 0;
+    
+    for (let i = 0; i < groupedChapters.length; i++) {
+      const groupChapterCount = groupedChapters[i].chapters.length;
+      // 如果累加后超过起始位置，说明这页应该从这个大纲开始
+      if (accumulatedCount + groupChapterCount > start) {
+        startIndex = i;
+        break;
       }
-      groups[key].chapters.push(chapter);
-    });
+      accumulatedCount += groupChapterCount;
+    }
+    
+    // 第二步：从起始位置开始，累加大纲直到达到页面大小限制
+    const result: typeof groupedChapters = [];
+    let pageChapterCount = 0;
+    
+    for (let i = startIndex; i < groupedChapters.length; i++) {
+      const groupChapterCount = groupedChapters[i].chapters.length;
+      // 如果添加这个大纲会超过页面限制，且结果不为空，则停止
+      if (pageChapterCount + groupChapterCount > end - start && result.length > 0) {
+        break;
+      }
+      result.push(groupedChapters[i]);
+      pageChapterCount += groupChapterCount;
+    }
+    
+    return result;
+  }, [groupedChapters, chapterPage, chapterPageSize]);
 
-    return Object.values(groups).sort((a, b) => a.outlineOrder - b.outlineOrder);
-  }, [pagedSortedChapters]);
-
-  // 搜索词或分页大小变化时重置到第一页
+  // 搜索词或分页大小变化时重置到第一页（one-to-many 模式下使用分组数据计算总页数）
   useEffect(() => {
     setChapterPage(1);
   }, [chapterSearchKeyword, chapterPageSize, currentProject?.outline_mode]);
 
-  // 数据变化导致页码越界时自动纠正
+  // 数据变化导致页码越界时自动纠正（one-to-many 模式下使用分组数据）
   useEffect(() => {
-    const maxPage = Math.max(1, Math.ceil(filteredSortedChapters.length / chapterPageSize));
-    if (chapterPage > maxPage) {
-      setChapterPage(maxPage);
+    if (currentProject?.outline_mode === 'one-to-many') {
+      // 计算总章节数用于分页校正
+      const totalChapters = groupedChapters.reduce((sum, group) => sum + group.chapters.length, 0);
+      const maxPage = Math.max(1, Math.ceil(totalChapters / chapterPageSize));
+      if (chapterPage > maxPage) {
+        setChapterPage(maxPage);
+      }
+    } else {
+      const maxPage = Math.max(1, Math.ceil(filteredSortedChapters.length / chapterPageSize));
+      if (chapterPage > maxPage) {
+        setChapterPage(maxPage);
+      }
     }
-  }, [filteredSortedChapters.length, chapterPage, chapterPageSize]);
+  }, [groupedChapters, filteredSortedChapters.length, chapterPage, chapterPageSize, currentProject?.outline_mode]);
 
   // 预计算每章可生成状态，避免在渲染阶段重复 O(n²) 扫描
   const chapterGenerateGateMap = useMemo(() => {
@@ -2507,7 +2529,9 @@ export default function Chapters() {
           <Pagination
             current={chapterPage}
             pageSize={chapterPageSize}
-            total={filteredSortedChapters.length}
+            total={currentProject?.outline_mode === 'one-to-many' 
+              ? groupedChapters.reduce((sum, group) => sum + group.chapters.length, 0)
+              : filteredSortedChapters.length}
             showSizeChanger
             pageSizeOptions={['10', '20', '50', '100']}
             onChange={(page, size) => {

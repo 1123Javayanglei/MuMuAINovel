@@ -1015,9 +1015,9 @@ export default function Outline() {
               >
                 <InputNumber
                   min={2}
-                  max={10}
+                  max={20}
                   style={{ width: '100%' }}
-                  placeholder="建议2-5章"
+                  placeholder="建议2-10章"
                 />
               </Form.Item>
 
@@ -1557,9 +1557,9 @@ export default function Outline() {
             >
               <InputNumber
                 min={2}
-                max={10}
+                max={20}
                 style={{ width: '100%' }}
-                placeholder="建议2-5章"
+                placeholder="建议2-10章"
               />
             </Form.Item>
 
