@@ -2,7 +2,8 @@
 # 支持多架构构建: linux/amd64, linux/arm64
 
 # 构建参数
-ARG USE_CN_MIRROR=false
+# 默认走国内镜像，并且 pip 安装时使用缓存
+ARG USE_CN_MIRROR=true
 ARG PIP_NO_CACHE=false
 
 # 阶段1: 构建前端
@@ -15,7 +16,7 @@ WORKDIR /frontend
 # 复制前端依赖文件
 COPY frontend/package*.json ./
 
-# 根据参数决定是否使用国内npm镜像
+# 根据参数决定是否使用国内npm镜像（清华源）
 RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
         npm config set registry https://registry.npmmirror.com; \
     fi
@@ -48,8 +49,8 @@ WORKDIR /app
 
 # 根据参数决定是否使用国内镜像源
 RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
-        sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
-        sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources; \
+        sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/debian.sources && \
+        sed -i 's/security.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/debian.sources; \
     fi
 
 # 安装系统依赖（添加数据库工具）
@@ -71,8 +72,8 @@ RUN if [ "$PIP_NO_CACHE" = "true" ]; then \
         NO_CACHE_FLAG=""; \
     fi && \
     if [ "$USE_CN_MIRROR" = "true" ]; then \
-        pip install $NO_CACHE_FLAG torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://mirrors.aliyun.com/pypi/simple/ && \
-        pip install $NO_CACHE_FLAG -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/ --extra-index-url https://download.pytorch.org/whl/cpu; \
+        pip install $NO_CACHE_FLAG torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
+        pip install $NO_CACHE_FLAG -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple --extra-index-url https://download.pytorch.org/whl/cpu; \
     else \
         pip install $NO_CACHE_FLAG torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu && \
         pip install $NO_CACHE_FLAG -r requirements.txt; \
@@ -81,22 +82,15 @@ RUN if [ "$PIP_NO_CACHE" = "true" ]; then \
 # 创建embedding目录
 RUN mkdir -p /app/embedding
 
+# 复制预下载的 embedding 模型（避免构建时从网络下载）
+COPY embedding.tar.gz /tmp/embedding.tar.gz
+RUN tar -xzf /tmp/embedding.tar.gz -C /app/ && \
+    rm /tmp/embedding.tar.gz && \
+    mv /app/embedding_extracted/* /app/embedding/ && \
+    rm -rf /app/embedding_extracted
+
 # 设置 Sentence-Transformers 缓存目录
 ENV SENTENCE_TRANSFORMERS_HOME=/app/embedding
-
-# 下载 embedding 模型（从 HuggingFace）
-# 使用 Python 脚本预下载模型，这样运行时不需要网络
-RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
-        export HF_ENDPOINT=https://hf-mirror.com; \
-    fi && \
-    python -c "\
-from sentence_transformers import SentenceTransformer; \
-import os; \
-os.environ['SENTENCE_TRANSFORMERS_HOME'] = '/app/embedding'; \
-print('Downloading sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2...'); \
-model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'); \
-print('Model downloaded successfully!'); \
-"
 
 # 复制后端代码（不包含embedding，因为已经下载了）
 COPY backend/ ./

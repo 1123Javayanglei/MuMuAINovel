@@ -128,3 +128,5 @@ backend/.instance_id
 
 docker-image/
 test.json
+
+embedding.tar.gz

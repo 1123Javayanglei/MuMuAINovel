@@ -1012,6 +1012,19 @@ async def analyze_chapter_background(
             else:
                 # 创建新记录
                 logger.info(f"  创建新的分析记录")
+                # 确保 pacing 是字符串类型（AI可能返回数值）
+                pacing_value = analysis_result.get('pacing', 'moderate')
+                if isinstance(pacing_value, (int, float)):
+                    # 如果是数值，转换为描述性字符串
+                    if pacing_value >= 8:
+                        pacing_str = 'fast'
+                    elif pacing_value >= 5:
+                        pacing_str = 'moderate'
+                    else:
+                        pacing_str = 'slow'
+                else:
+                    pacing_str = str(pacing_value) if pacing_value else 'moderate'
+                
                 plot_analysis = PlotAnalysis(
                     chapter_id=chapter_id,
                     project_id=project_id,
@@ -1029,7 +1042,7 @@ async def analyze_chapter_background(
                     plot_points_count=len(analysis_result.get('plot_points', [])),
                     character_states=analysis_result.get('character_states', []),
                     scenes=analysis_result.get('scenes', []),
-                    pacing=analysis_result.get('pacing', 'moderate'),
+                    pacing=pacing_str,
                     overall_quality_score=analysis_result.get('scores', {}).get('overall', 0),
                     pacing_score=analysis_result.get('scores', {}).get('pacing', 0),
                     engagement_score=analysis_result.get('scores', {}).get('engagement', 0),
