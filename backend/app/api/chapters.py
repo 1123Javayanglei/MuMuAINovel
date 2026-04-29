@@ -1000,7 +1000,24 @@ async def analyze_chapter_background(
                 existing_analysis.plot_points_count = len(analysis_result.get('plot_points', []))
                 existing_analysis.character_states = analysis_result.get('character_states', [])
                 existing_analysis.scenes = analysis_result.get('scenes', [])
-                existing_analysis.pacing = analysis_result.get('pacing', 'moderate')
+                
+                # 确保 pacing 是字符串类型且不超过合理长度
+                pacing_value = analysis_result.get('pacing', 'moderate')
+                logger.info(f"🔍 [DEBUG-UPDATE] AI返回的pacing原始值: {repr(pacing_value)}, 类型: {type(pacing_value).__name__}, 长度: {len(str(pacing_value)) if pacing_value else 0}")
+                
+                if isinstance(pacing_value, (int, float)):
+                    if pacing_value >= 8:
+                        pacing_str = 'fast'
+                    elif pacing_value >= 5:
+                        pacing_str = 'moderate'
+                    else:
+                        pacing_str = 'slow'
+                else:
+                    pacing_str = str(pacing_value) if pacing_value else 'moderate'
+                
+                existing_analysis.pacing = pacing_str
+                logger.info(f"✅ [DEBUG-UPDATE] 处理后的pacing值: {repr(pacing_str)}, 长度: {len(pacing_str)}")
+                
                 existing_analysis.overall_quality_score = analysis_result.get('scores', {}).get('overall', 0)
                 existing_analysis.pacing_score = analysis_result.get('scores', {}).get('pacing', 0)
                 existing_analysis.engagement_score = analysis_result.get('scores', {}).get('engagement', 0)

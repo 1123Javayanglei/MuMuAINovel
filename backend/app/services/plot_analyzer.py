@@ -292,7 +292,7 @@ class PlotAnalyzer:
             
         except json.JSONDecodeError as e:
             logger.error(f"❌ JSON解析失败: {str(e)}")
-            logger.error(f"  原始响应(前500字): {response[:500]}")
+            logger.error(f"  原始响应(完整):\n{response}")
             return None
         except Exception as e:
             logger.error(f"❌ 解析异常: {str(e)}")
