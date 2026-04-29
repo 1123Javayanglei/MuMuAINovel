@@ -26,6 +26,7 @@ from app.logger import get_logger
 from app.config import settings as app_settings, PROJECT_ROOT
 from app.services.ai_service import AIService, create_user_ai_service, create_user_ai_service_with_mcp, normalize_provider
 from app.services.email_service import email_service
+from app.security import validate_public_http_url
 
 logger = get_logger(__name__)
 
@@ -156,6 +157,44 @@ async def get_user_ai_service(
         db_session=db,                 # ✅ 传递 db_session
         system_prompt=settings.system_prompt,
         enable_mcp=enable_mcp,         # 根据MCP插件状态动态决定
+    )
+
+
+async def get_user_ai_service_from_db(user_id: str, db: AsyncSession) -> AIService:
+    """
+    从数据库直接创建用户AI服务实例（用于后台任务，不依赖FastAPI的Depends）
+    """
+    from app.models.mcp_plugin import MCPPlugin
+
+    result = await db.execute(
+        select(Settings).where(Settings.user_id == user_id)
+    )
+    settings = result.scalar_one_or_none()
+
+    if not settings:
+        env_defaults = read_env_defaults()
+        settings = Settings(user_id=user_id, **env_defaults)
+        db.add(settings)
+        await db.commit()
+        await db.refresh(settings)
+
+    mcp_result = await db.execute(
+        select(MCPPlugin).where(MCPPlugin.user_id == user_id)
+    )
+    mcp_plugins = mcp_result.scalars().all()
+    enable_mcp = any(plugin.enabled for plugin in mcp_plugins) if mcp_plugins else False
+
+    return create_user_ai_service_with_mcp(
+        api_provider=settings.api_provider,
+        api_key=settings.api_key,
+        api_base_url=settings.api_base_url or "",
+        model_name=settings.llm_model,
+        temperature=settings.temperature,
+        max_tokens=settings.max_tokens,
+        user_id=user_id,
+        db_session=db,
+        system_prompt=settings.system_prompt,
+        enable_mcp=enable_mcp,
     )
 
 
@@ -452,7 +491,8 @@ async def delete_settings(
 async def get_available_models(
     api_key: str,
     api_base_url: str,
-    provider: str = "openai"
+    provider: str = "openai",
+    user: User = Depends(require_login)
 ):
     """
     从配置的 API 获取可用的模型列表
@@ -467,6 +507,7 @@ async def get_available_models(
     """
     try:
         provider = normalize_provider(provider)
+        api_base_url = validate_public_http_url(api_base_url)
         async with httpx.AsyncClient(timeout=10.0) as client:
             if provider == "openai" or provider == "azure" or provider == "custom":
                 # OpenAI 兼容接口获取模型列表

@@ -1,5 +1,5 @@
 """FastAPI应用主入口"""
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse
@@ -29,7 +29,21 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 注册MCP状态同步服务
     register_status_sync()
-    
+
+    # 安全保障：确保后台任务表存在（兼容未执行Alembic迁移的旧部署）
+    try:
+        from app.database import get_engine
+        from app.models.background_task import BackgroundTask
+        _startup_engine = await get_engine("system")
+        async with _startup_engine.begin() as conn:
+            # 仅创建 background_tasks 表（如果不存在），不影响其他表
+            await conn.run_sync(
+                lambda sync_conn: BackgroundTask.__table__.create(sync_conn, checkfirst=True)
+            )
+        logger.info("后台任务表检查完成")
+    except Exception as e:
+        logger.warning(f"后台任务表检查失败（不影响启动）: {e}")
+
     logger.info("应用启动完成")
     
     yield
@@ -106,7 +120,7 @@ async def health_check():
 
 
 @app.get("/health/db-sessions")
-async def db_session_stats():
+async def db_session_stats(request: Request):
     """
     数据库会话统计（监控连接泄漏）
     
@@ -118,6 +132,8 @@ async def db_session_stats():
     - generator_exits: SSE断开次数
     - last_check: 最后检查时间
     """
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="需要管理员权限")
     return {
         "status": "ok",
         "session_stats": _session_stats,
@@ -131,7 +147,7 @@ from app.api import (
     auth, users, settings, writing_styles, memories,
     mcp_plugins, admin, inspiration, prompt_templates,
     changelog, careers, foreshadows, prompt_workshop, book_import,
-    project_covers
+    project_covers, tasks
 )
 
 app.include_router(auth.router, prefix="/api")
@@ -157,6 +173,7 @@ app.include_router(prompt_templates.router, prefix="/api")  # 提示词模板管
 app.include_router(changelog.router, prefix="/api")  # 更新日志API
 app.include_router(prompt_workshop.router, prefix="/api")  # 提示词工坊API
 app.include_router(book_import.router, prefix="/api")  # 拆书导入API
+app.include_router(tasks.router, prefix="/api")  # 后台任务API
 
 static_dir = Path(__file__).parent.parent / "static"
 generated_assets_root_dir = Path(__file__).parent.parent / "storage"
@@ -176,8 +193,18 @@ if static_dir.exists():
             )
         
         file_path = static_dir / full_path
-        if file_path.is_file():
-            return FileResponse(file_path)
+        try:
+            resolved_file = file_path.resolve()
+            resolved_static = static_dir.resolve()
+            resolved_file.relative_to(resolved_static)
+        except ValueError:
+            return JSONResponse(
+                status_code=404,
+                content={"detail": "页面不存在"}
+            )
+
+        if resolved_file.is_file():
+            return FileResponse(resolved_file)
         
         index_file = static_dir / "index.html"
         if index_file.exists():

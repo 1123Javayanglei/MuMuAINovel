@@ -2,14 +2,15 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, theme } from 'antd';
 import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
+import { eventBus } from '../store/eventBus';
 import { useChapterSync } from '../store/hooks';
-import { projectApi, writingStyleApi, chapterApi, outlineApi } from '../services/api';
+import { generateChapterBackground } from '../services/backgroundTaskService';
+import { projectApi, writingStyleApi, chapterApi } from '../services/api';
 import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData } from '../types';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import ChapterAnalysis from '../components/ChapterAnalysis';
 import ExpansionPlanEditor from '../components/ExpansionPlanEditor';
 import { SSELoadingOverlay } from '../components/SSELoadingOverlay';
-import { SSEProgressModal } from '../components/SSEProgressModal';
 import ChapterReader from '../components/ChapterReader';
 import PartialRegenerateToolbar from '../components/PartialRegenerateToolbar';
 import PartialRegenerateModal from '../components/PartialRegenerateModal';
@@ -96,6 +97,7 @@ export default function Chapters() {
   // 单章节生成进度状态
   const [singleChapterProgress, setSingleChapterProgress] = useState(0);
   const [singleChapterProgressMessage, setSingleChapterProgressMessage] = useState('');
+
 
   // 批量生成相关状态
   const [batchGenerateVisible, setBatchGenerateVisible] = useState(false);
@@ -523,7 +525,7 @@ export default function Chapters() {
       if (data.has_active_task && data.task) {
         const task = data.task;
 
-        // 恢复任务状态
+        // 恢复任务状态（只在顶部进度条显示，不弹出Modal）
         setBatchTaskId(task.batch_id);
         setBatchProgress({
           status: task.status,
@@ -532,12 +534,12 @@ export default function Chapters() {
           current_chapter_number: task.current_chapter_number,
         });
         setBatchGenerating(true);
-        setBatchGenerateVisible(true);
+        // 不设置 setBatchGenerateVisible(true)，避免弹出Modal遮挡页面
 
         // 启动轮询
         startBatchPolling(task.batch_id);
 
-        message.info('检测到未完成的批量生成任务，已自动恢复');
+        message.info('检测到未完成的批量生成任务，请查看任务列表');
       }
     } catch (error) {
       console.error('检查批量生成任务失败:', error);
@@ -587,7 +589,7 @@ export default function Chapters() {
   };
 
   // 按章节号排序并按大纲分组章节 (必须在早返回之前调用，避免违反 Hooks 规则)
-  const { sortedChapters, groupedChapters } = useMemo(() => {
+  const { sortedChapters } = useMemo(() => {
     const sorted = [...chapters].sort((a, b) => a.chapter_number - b.chapter_number);
 
     const groups: Record<string, {
@@ -612,9 +614,7 @@ export default function Chapters() {
       groups[key].chapters.push(chapter);
     });
 
-    const grouped = Object.values(groups).sort((a, b) => a.outlineOrder - b.outlineOrder);
-
-    return { sortedChapters: sorted, groupedChapters: grouped };
+    return { sortedChapters: sorted };
   }, [chapters]);
 
   // 章节查询过滤（前端过滤，减少渲染压力）
@@ -631,69 +631,49 @@ export default function Chapters() {
     });
   }, [sortedChapters, chapterSearchKeyword]);
 
-  // one-to-one 模式：分页后的扁平章节
+  // 分页后的扁平章节
   const pagedSortedChapters = useMemo(() => {
     const start = (chapterPage - 1) * chapterPageSize;
     return filteredSortedChapters.slice(start, start + chapterPageSize);
   }, [filteredSortedChapters, chapterPage, chapterPageSize]);
 
-  // one-to-many 模式：对大纲分组进行分页（确保同一大纲不被拆分）
+  // one-to-many 模式分页后再按大纲分组
   const pagedGroupedChapters = useMemo(() => {
-    const start = (chapterPage - 1) * chapterPageSize;
-    const end = start + chapterPageSize;
-    
-    // 第一步：找到起始大纲索引
-    let accumulatedCount = 0;
-    let startIndex = 0;
-    
-    for (let i = 0; i < groupedChapters.length; i++) {
-      const groupChapterCount = groupedChapters[i].chapters.length;
-      // 如果累加后超过起始位置，说明这页应该从这个大纲开始
-      if (accumulatedCount + groupChapterCount > start) {
-        startIndex = i;
-        break;
-      }
-      accumulatedCount += groupChapterCount;
-    }
-    
-    // 第二步：从起始位置开始，累加大纲直到达到页面大小限制
-    const result: typeof groupedChapters = [];
-    let pageChapterCount = 0;
-    
-    for (let i = startIndex; i < groupedChapters.length; i++) {
-      const groupChapterCount = groupedChapters[i].chapters.length;
-      // 如果添加这个大纲会超过页面限制，且结果不为空，则停止
-      if (pageChapterCount + groupChapterCount > end - start && result.length > 0) {
-        break;
-      }
-      result.push(groupedChapters[i]);
-      pageChapterCount += groupChapterCount;
-    }
-    
-    return result;
-  }, [groupedChapters, chapterPage, chapterPageSize]);
+    const groups: Record<string, {
+      outlineId: string | null;
+      outlineTitle: string;
+      outlineOrder: number;
+      chapters: Chapter[];
+    }> = {};
 
-  // 搜索词或分页大小变化时重置到第一页（one-to-many 模式下使用分组数据计算总页数）
+    pagedSortedChapters.forEach(chapter => {
+      const key = chapter.outline_id || 'uncategorized';
+      if (!groups[key]) {
+        groups[key] = {
+          outlineId: chapter.outline_id || null,
+          outlineTitle: chapter.outline_title || '未分类章节',
+          outlineOrder: chapter.outline_order ?? 999,
+          chapters: []
+        };
+      }
+      groups[key].chapters.push(chapter);
+    });
+
+    return Object.values(groups).sort((a, b) => a.outlineOrder - b.outlineOrder);
+  }, [pagedSortedChapters]);
+
+  // 搜索词或分页大小变化时重置到第一页
   useEffect(() => {
     setChapterPage(1);
   }, [chapterSearchKeyword, chapterPageSize, currentProject?.outline_mode]);
 
-  // 数据变化导致页码越界时自动纠正（one-to-many 模式下使用分组数据）
+  // 数据变化导致页码越界时自动纠正
   useEffect(() => {
-    if (currentProject?.outline_mode === 'one-to-many') {
-      // 计算总章节数用于分页校正
-      const totalChapters = groupedChapters.reduce((sum, group) => sum + group.chapters.length, 0);
-      const maxPage = Math.max(1, Math.ceil(totalChapters / chapterPageSize));
-      if (chapterPage > maxPage) {
-        setChapterPage(maxPage);
-      }
-    } else {
-      const maxPage = Math.max(1, Math.ceil(filteredSortedChapters.length / chapterPageSize));
-      if (chapterPage > maxPage) {
-        setChapterPage(maxPage);
-      }
+    const maxPage = Math.max(1, Math.ceil(filteredSortedChapters.length / chapterPageSize));
+    if (chapterPage > maxPage) {
+      setChapterPage(maxPage);
     }
-  }, [groupedChapters, filteredSortedChapters.length, chapterPage, chapterPageSize, currentProject?.outline_mode]);
+  }, [filteredSortedChapters.length, chapterPage, chapterPageSize]);
 
   // 预计算每章可生成状态，避免在渲染阶段重复 O(n²) 扫描
   const chapterGenerateGateMap = useMemo(() => {
@@ -993,9 +973,52 @@ export default function Chapters() {
     });
   };
 
+
+  // 后台生成章节（关闭浏览器也不影响）
+  // 不再强制显示进度弹窗，任务进度在右下角悬浮任务框中显示
+  const handleBackgroundGenerate = async () => {
+    if (!editingId) return;
+    if (!selectedStyleId) {
+      message.error("请先选择写作风格");
+      return;
+    }
+
+    try {
+      await generateChapterBackground(
+        editingId,
+        {
+          style_id: selectedStyleId,
+          target_word_count: targetWordCount,
+          model: selectedModel,
+          narrative_perspective: temporaryNarrativePerspective,
+        },
+        () => {
+          // 进度更新由悬浮任务框处理，无需额外操作
+        },
+        (_) => {
+          message.success("后台章节生成完成！");
+          refreshChapters();
+          if (currentProject) {
+            projectApi.getProject(currentProject.id).then(setCurrentProject).catch(console.error);
+          }
+          loadAnalysisTasks();
+        },
+        (error) => {
+          message.error("后台生成失败: " + error);
+        }
+      );
+
+      message.info("章节生成任务已提交，可在右下角任务面板查看进度");
+      // 通知悬浮任务框刷新
+      eventBus.emit('background-task-created');
+    } catch (error) {
+      message.error("创建后台任务失败");
+    }
+  };
   const getStatusColor = (status: string) => {
     const colors: Record<string, string> = {
       'draft': 'default',
+      'pending': 'warning',
       'writing': 'processing',
       'completed': 'success',
     };
@@ -1005,6 +1028,7 @@ export default function Chapters() {
   const getStatusText = (status: string) => {
     const texts: Record<string, string> = {
       'draft': '草稿',
+      'pending': '待处理',
       'writing': '创作中',
       'completed': '已完成',
     };
@@ -1044,7 +1068,7 @@ export default function Chapters() {
     // 获取该项目的所有大纲
     try {
       const outlinesList = await outlineApi.getOutlines(currentProject.id);
-      
+
       if (outlinesList.length === 0) {
         message.warning('当前项目没有大纲，请先创建大纲');
         return;
@@ -1054,15 +1078,15 @@ export default function Chapters() {
         title: '📝 导出番茄小说格式（ZIP）',
         content: (
           <div>
-            <div style={{ 
-              display: 'flex', 
-              justifyContent: 'space-between', 
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
               alignItems: 'center',
               marginBottom: '12px'
             }}>
               <p style={{ margin: 0 }}>请选择要导出的大纲（可多选）：</p>
               <Space size="small">
-                <Button 
+                <Button
                   size="small"
                   onClick={() => {
                     const checkboxes = document.querySelectorAll<HTMLInputElement>('input[type="checkbox"][id^="outline-"]');
@@ -1071,7 +1095,7 @@ export default function Chapters() {
                 >
                   全选
                 </Button>
-                <Button 
+                <Button
                   size="small"
                   onClick={() => {
                     const checkboxes = document.querySelectorAll<HTMLInputElement>('input[type="checkbox"][id^="outline-"]');
@@ -1082,15 +1106,15 @@ export default function Chapters() {
                 </Button>
               </Space>
             </div>
-            <div style={{ 
-              maxHeight: '300px', 
+            <div style={{
+              maxHeight: '300px',
               overflowY: 'auto',
               padding: '8px',
               border: '1px solid #d9d9d9',
               borderRadius: '4px'
             }}>
               {outlinesList.map((outline: any) => (
-                <div key={outline.id} style={{ 
+                <div key={outline.id} style={{
                   padding: '8px',
                   borderBottom: '1px solid #f0f0f0',
                   display: 'flex',
@@ -1110,9 +1134,9 @@ export default function Chapters() {
                 </div>
               ))}
             </div>
-            <div style={{ 
-              background: '#f5f5f5', 
-              padding: '12px', 
+            <div style={{
+              background: '#f5f5f5',
+              padding: '12px',
               borderRadius: '4px',
               marginTop: '12px',
               fontSize: '12px'
@@ -1234,7 +1258,7 @@ export default function Chapters() {
 
     try {
       setBatchGenerating(true);
-      setBatchGenerateVisible(false); // 关闭配置对话框，避免遮挡进度弹窗
+      setBatchGenerateVisible(false); // 关闭配置对话框，任务进度在悬浮任务框中显示
 
       const requestBody: {
         start_chapter_number: number;
@@ -1284,7 +1308,9 @@ export default function Chapters() {
         estimated_time_minutes: result.estimated_time_minutes,
       });
 
-      message.success(`批量生成任务已创建，预计需要 ${result.estimated_time_minutes} 分钟`);
+      message.success(`批量生成任务已创建，预计需要 ${result.estimated_time_minutes} 分钟，可在右下角任务面板查看进度`);
+      // 通知悬浮任务框刷新
+      eventBus.emit('background-task-created');
 
       // 🔔 触发浏览器通知（任务开始）
       showBrowserNotification(
@@ -1538,6 +1564,7 @@ export default function Chapters() {
           >
             <Select>
               <Select.Option value="draft">草稿</Select.Option>
+              <Select.Option value="pending">待处理</Select.Option>
               <Select.Option value="writing">创作中</Select.Option>
               <Select.Option value="completed">已完成</Select.Option>
             </Select>
@@ -2086,12 +2113,13 @@ export default function Chapters() {
             type="primary"
             icon={<RocketOutlined />}
             onClick={handleOpenBatchGenerate}
-            disabled={chapters.length === 0}
+            disabled={chapters.length === 0 || batchGenerating}
+            loading={batchGenerating}
             block={isMobile}
             size={isMobile ? 'middle' : 'middle'}
-            style={{ background: token.colorInfo, borderColor: token.colorInfo }}
+            style={batchGenerating ? {} : { background: token.colorInfo, borderColor: token.colorInfo }}
           >
-            批量生成
+            {batchGenerating ? '生成中...' : '批量生成'}
           </Button>
           <Button
             type="default"
@@ -2115,6 +2143,7 @@ export default function Chapters() {
           </Button>
         </Space>
       </div>
+
 
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {chapters.length === 0 ? (
@@ -2529,9 +2558,7 @@ export default function Chapters() {
           <Pagination
             current={chapterPage}
             pageSize={chapterPageSize}
-            total={currentProject?.outline_mode === 'one-to-many' 
-              ? groupedChapters.reduce((sum, group) => sum + group.chapters.length, 0)
-              : filteredSortedChapters.length}
+            total={filteredSortedChapters.length}
             showSizeChanger
             pageSizeOptions={['10', '20', '50', '100']}
             onChange={(page, size) => {
@@ -2598,6 +2625,7 @@ export default function Chapters() {
           <Form.Item label="状态" name="status">
             <Select placeholder="选择状态">
               <Select.Option value="draft">草稿</Select.Option>
+              <Select.Option value="pending">待处理</Select.Option>
               <Select.Option value="writing">创作中</Select.Option>
               <Select.Option value="completed">已完成</Select.Option>
             </Select>
@@ -2660,6 +2688,7 @@ export default function Chapters() {
                 const disabledReason = currentChapter ? getGenerateDisabledReason(currentChapter) : '';
 
                 return (
+                  <>
                   <Button
                     type="primary"
                     icon={canGenerate ? <ThunderboltOutlined /> : <LockOutlined />}
@@ -2668,14 +2697,25 @@ export default function Chapters() {
                     disabled={!canGenerate}
                     danger={!canGenerate}
                     style={{ fontWeight: 'bold' }}
-                    title={!canGenerate ? disabledReason : '根据大纲和前置章节内容创作'}
+                    title={!canGenerate ? disabledReason : '根据大纲和前置章节内容创作（流式）'}
                   >
                     {isMobile ? 'AI' : 'AI创作'}
                   </Button>
+                  <Button
+                    icon={<RocketOutlined />}
+                    onClick={handleBackgroundGenerate}
+                    disabled={!canGenerate || isContinuing}
+                    style={{ fontWeight: 'bold' }}
+                    title={!canGenerate ? disabledReason : '后台生成：关闭浏览器也不影响，完成后自动保存'}
+                  >
+                    {isMobile ? '后台' : '后台生成'}
+                  </Button>
+                  </>
                 );
               })()}
             </Space.Compact>
           </Form.Item>
+
 
           {/* 第一行：写作风格 + 叙事角度 */}
           <div style={{
@@ -3095,30 +3135,6 @@ export default function Chapters() {
         loading={isGenerating}
         progress={singleChapterProgress}
         message={singleChapterProgressMessage}
-      />
-
-      {/* 批量生成进度显示 - 使用统一的进度组件 */}
-      <SSEProgressModal
-        visible={batchGenerating}
-        progress={batchProgress ? Math.round((batchProgress.completed / batchProgress.total) * 100) : 0}
-        message={
-          batchProgress?.current_chapter_number
-            ? `正在生成第 ${batchProgress.current_chapter_number} 章... (${batchProgress.completed}/${batchProgress.total})`
-            : `批量生成进行中... (${batchProgress?.completed || 0}/${batchProgress?.total || 0})`
-        }
-        title="批量生成章节"
-        onCancel={() => {
-          modal.confirm({
-            title: '确认取消',
-            content: '确定要取消批量生成吗？已生成的章节将保留。',
-            okText: '确定取消',
-            cancelText: '继续生成',
-            okButtonProps: { danger: true },
-            centered: true,
-            onOk: handleCancelBatchGenerate,
-          });
-        }}
-        cancelButtonText="取消任务"
       />
 
       {/* 章节阅读器 */}

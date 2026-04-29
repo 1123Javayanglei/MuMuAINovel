@@ -4,7 +4,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete
 from typing import List, AsyncGenerator, Dict, Any
 import json
-import asyncio
 
 from app.database import get_db
 from app.api.common import verify_project_access
@@ -28,6 +27,7 @@ from app.schemas.outline import (
     CreateChaptersFromPlansResponse
 )
 from app.services.ai_service import AIService
+from app.services.json_helper import loads_json
 from app.services.prompt_service import prompt_service, PromptService
 from app.services.memory_service import memory_service
 from app.services.plot_expansion_service import PlotExpansionService
@@ -851,7 +851,7 @@ def _parse_ai_response(ai_response: str, raise_on_error: bool = False) -> list:
         ai_service_temp = AIService()
         cleaned_text = ai_service_temp._clean_json_response(ai_response)
         
-        outline_data = json.loads(cleaned_text)
+        outline_data = loads_json(cleaned_text)
         
         # 确保是列表格式
         if not isinstance(outline_data, list):
@@ -921,8 +921,6 @@ async def _save_outlines(
     保存大纲到数据库（修复版：从structure中提取title和content保存到数据库）
     
     如果项目为one-to-one模式，同时自动创建对应的章节
-    
-    🔧 修复：确保 order_index 不重复
     """
     # 获取项目信息以确定outline_mode
     project_result = await db.execute(
@@ -930,69 +928,24 @@ async def _save_outlines(
     )
     project = project_result.scalar_one_or_none()
     
-    # 🔧 检查数据库中已有的最大 order_index
-    max_order_result = await db.execute(
-        select(func.max(Outline.order_index)).where(Outline.project_id == project_id)
-    )
-    existing_max_order = max_order_result.scalar() or 0
-    
     outlines = []
-    seen_orders = set()  # 跟踪本批次中已使用的 order_index
-    seen_titles = {}  # 🔧 跟踪已使用的标题，避免重复 {title: [order_indices]}
     
     for idx, chapter_data in enumerate(outline_data):
-        # 🔧 优先使用 AI 返回的 chapter_number，否则使用计算值
-        ai_chapter_num = chapter_data.get("chapter_number")
+        order_idx = chapter_data.get("chapter_number", start_index + idx)
         
-        if ai_chapter_num is not None:
-            order_idx = int(ai_chapter_num)
-        else:
-            order_idx = start_index + idx
-        
-        # 🔧 防止 order_index 重复
-        while order_idx in seen_orders or order_idx <= existing_max_order:
-            logger.warning(f"⚠️ 检测到重复的 order_index={order_idx}，自动调整为 {existing_max_order + len(seen_orders) + 1}")
-            order_idx = existing_max_order + len(seen_orders) + 1
-        
-        # 🔧 从structure中提取title
+        # 🔧 修复：从structure中提取title和summary/content保存到数据库
         chapter_title = chapter_data.get("title", f"第{order_idx}章")
-        original_title = chapter_title  # 保存原始标题用于日志
-        
-        # 🔧 检测标题重复并自动修正
-        if chapter_title in seen_titles:
-            # 标题已存在，添加序号区分
-            duplicate_count = len(seen_titles[chapter_title])
-            chapter_title = f"{chapter_title}（{duplicate_count + 1}）"
-            logger.warning(
-                f"⚠️ 检测到重复标题 '{original_title}' (order_index={order_idx})，"
-                f"自动修正为 '{chapter_title}'"
-            )
-            # 更新 chapter_data 中的 title
-            chapter_data["title"] = chapter_title
-            # 记录新标题
-            if chapter_title not in seen_titles:
-                seen_titles[chapter_title] = []
-            seen_titles[chapter_title].append(order_idx)
-        else:
-            # 首次出现该标题
-            seen_titles[chapter_title] = [order_idx]
-        
-        seen_orders.add(order_idx)
-        
-        # 🔧 从structure中提取summary/content
         chapter_content = chapter_data.get("summary") or chapter_data.get("content", "")
         
         outline = Outline(
             project_id=project_id,
-            title=chapter_title,
-            content=chapter_content,
+            title=chapter_title,  # 从JSON中提取title
+            content=chapter_content,  # 从JSON中提取summary或content
             structure=json.dumps(chapter_data, ensure_ascii=False),
             order_index=order_idx
         )
         db.add(outline)
         outlines.append(outline)
-        
-        logger.debug(f"✅ 保存大纲: order_index={order_idx}, title={chapter_title[:30]}")
     
     # 如果是one-to-one模式，自动创建章节
     if project and project.outline_mode == 'one-to-one':
@@ -1489,145 +1442,157 @@ async def continue_outline_generator(
                 user_ai_service.user_id = user_id
                 user_ai_service.db_session = db
             
-            # 🚀 方案B：串行生成（保证内容连贯性）
-            # 注意：虽然速度较慢，但能确保每章都能看到前面章节的内容
             yield await tracker.generating(
                 current_chars=0,
                 estimated_total=estimated_chars_per_batch,
-                message=f"📝 逐章生成第{str(batch_num + 1)}批（{current_batch_size}章）..."
+                message=f"🤖 调用AI生成第{str(batch_num + 1)}批..."
             )
             
-            # 使用标准续写提示词模板
+            # 获取伏笔提醒信息（用于大纲续写）
+            foreshadow_reminders_text = "暂无需要关注的伏笔"
+            try:
+                foreshadow_context = await foreshadow_service.build_chapter_context(
+                    db=db,
+                    project_id=project_id,
+                    chapter_number=current_start_chapter,
+                    include_pending=False,
+                    include_overdue=True,
+                    lookahead=10
+                )
+                if foreshadow_context and foreshadow_context.get("context_text"):
+                    foreshadow_reminders_text = foreshadow_context["context_text"]
+                    logger.info(f"✅ 大纲续写获取到伏笔提醒: {len(foreshadow_reminders_text)}字符")
+                    # 追加伏笔统计信息
+                    foreshadow_stats = await foreshadow_service.get_stats(db, project_id)
+                    if foreshadow_stats:
+                        planted = foreshadow_stats.get('planted', 0)
+                        resolved = foreshadow_stats.get('resolved', 0)
+                        partial = foreshadow_stats.get('partially_resolved', 0)
+                        pending = foreshadow_stats.get('pending', 0)
+                        foreshadow_reminders_text += f"\n【📊 伏笔统计】已埋设:{planted} 已回收:{resolved} 部分回收:{partial} 待埋入:{pending}"
+            except Exception as e:
+                logger.warning(f"⚠️ 获取大纲续写伏笔提醒失败: {str(e)}")
+
+            # 使用标准续写提示词模板（简化版）
             template = await PromptService.get_template("OUTLINE_CONTINUE", user_id, db)
+            prompt = PromptService.format_prompt(
+                template,
+                # 基础信息
+                title=project.title,
+                theme=project.theme or "未设定",
+                genre=project.genre or "通用",
+                narrative_perspective=project.narrative_perspective or "第三人称",
+                time_period=project.world_time_period or "未设定",
+                location=project.world_location or "未设定",
+                atmosphere=project.world_atmosphere or "未设定",
+                rules=project.world_rules or "未设定",
+                # 上下文信息
+                recent_outlines=context['recent_outlines'],
+                characters_info=context['characters_info'],
+                # 伏笔提醒
+                foreshadow_reminders=foreshadow_reminders_text,
+                # 续写参数
+                chapter_count=current_batch_size,
+                start_chapter=current_start_chapter,
+                end_chapter=current_start_chapter + current_batch_size - 1,
+                current_chapter_count=len(latest_outlines),
+                plot_stage_instruction=stage_instruction,
+                story_direction=data.get("story_direction", "自然延续"),
+                requirements=data.get("requirements", ""),
+                mcp_references=""
+            )
+            logger.debug(f" 续写提示词: {prompt}")
+            # 调用AI生成当前批次
             model_param = data.get("model")
             provider_param = data.get("provider")
             logger.info(f"=== 续写批次{batch_num + 1} AI调用参数 ===")
             logger.info(f"  provider参数: {provider_param}")
             logger.info(f"  model参数: {model_param}")
-            logger.info(f"  生成模式: 串行生成（保证上下文连贯）")
             
-            # 📝 串行生成每一章
-            batch_results = []
-            for i in range(current_batch_size):
-                chapter_num = current_start_chapter + i
+            # 流式生成并累积文本
+            accumulated_text = ""
+            chunk_count = 0
+            
+            async for chunk in user_ai_service.generate_text_stream(
+                prompt=prompt,
+                provider=provider_param,
+                model=model_param
+            ):
+                chunk_count += 1
+                accumulated_text += chunk
                 
-                # 获取最新的大纲列表（包括本批次已生成的章节）
-                latest_result = await db.execute(
-                    select(Outline)
-                    .where(Outline.project_id == project_id)
-                    .order_by(Outline.order_index)
-                )
-                latest_outlines_current = latest_result.scalars().all()
+                # 发送内容块
+                yield await tracker.generating_chunk(chunk)
                 
-                # 重新构建上下文（包含本批次已生成的章节）
-                context_current = await _build_outline_continue_context(
-                    project=project,
-                    latest_outlines=latest_outlines_current,
-                    characters=characters,
-                    chapter_count=1,
-                    plot_stage=data.get("plot_stage", "development"),
-                    story_direction=data.get("story_direction", "自然延续"),
-                    requirements=data.get("requirements", ""),
-                    db=db
-                )
-                
-                logger.info(f"📖 生成第{chapter_num}章，当前已有{len(latest_outlines_current)}章大纲")
-                yield await tracker.generating(
-                    current_chars=i * 1000,
-                    estimated_total=estimated_chars_per_batch,
-                    message=f"📝 正在生成第{chapter_num}章 ({i+1}/{current_batch_size})..."
-                )
-                
-                # 为单个章节构建 prompt
-                single_prompt = PromptService.format_prompt(
-                    template,
-                    # 基础信息
-                    title=project.title,
-                    theme=project.theme or "未设定",
-                    genre=project.genre or "通用",
-                    narrative_perspective=project.narrative_perspective or "第三人称",
-                    time_period=project.world_time_period or "未设定",
-                    location=project.world_location or "未设定",
-                    atmosphere=project.world_atmosphere or "未设定",
-                    rules=project.world_rules or "未设定",
-                    # 上下文信息（动态更新）
-                    recent_outlines=context_current['recent_outlines'],
-                    characters_info=context_current['characters_info'],
-                    # 续写参数 - 每次只生成1章
-                    chapter_count=1,
-                    start_chapter=chapter_num,
-                    end_chapter=chapter_num,
-                    current_chapter_count=len(latest_outlines_current),
-                    plot_stage_instruction=stage_instruction,
-                    story_direction=data.get("story_direction", "自然延续"),
-                    requirements=data.get("requirements", ""),
-                    mcp_references=""
-                )
-                
-                # 调用AI生成
-                try:
-                    result = await user_ai_service.call_with_json_retry(
-                        prompt=single_prompt,
-                        max_retries=2,
-                        expected_type="array"
+                # 定期更新进度
+                if chunk_count % 10 == 0:
+                    yield await tracker.generating(
+                        current_chars=len(accumulated_text),
+                        estimated_total=estimated_chars_per_batch,
+                        message=f"📝 第{str(batch_num + 1)}/{str(total_batches)}批生成中"
                     )
-                    batch_results.append(result)
-                except Exception as e:
-                    logger.error(f"❌ 第{chapter_num}章生成失败: {e}")
-                    batch_results.append(e)
-            
-            # 处理结果
-            outline_data = []
-            failed_chapters = []
-            
-            for i, result in enumerate(batch_results):
-                chapter_num = current_start_chapter + i
                 
-                if isinstance(result, Exception):
-                    logger.error(f"❌ 第{chapter_num}章生成失败: {result}")
-                    failed_chapters.append(chapter_num)
-                    # 使用 fallback 大纲
-                    fallback_outline = {
-                        "title": f"第{chapter_num}章",
-                        "summary": "待补充",
-                        "content": "",
-                        "key_events": [],
-                        "character_development": "",
-                        "plot_progression": "",
-                        "chapter_number": chapter_num  # 🔧 确保包含章节号
-                    }
-                    outline_data.append(fallback_outline)
-                else:
-                    # 解析成功，提取第一个元素（因为是数组）
-                    chapter_outline = None
-                    if isinstance(result, list) and len(result) > 0:
-                        chapter_outline = result[0]
-                    elif isinstance(result, dict):
-                        chapter_outline = result
+                # 每20个块发送心跳
+                if chunk_count % 20 == 0:
+                    yield await tracker.heartbeat()
+            
+            yield await tracker.parsing(f"✅ 第{str(batch_num + 1)}批AI生成完成，正在解析...")
+            
+            # 提取内容
+            ai_content = accumulated_text
+            ai_response = {"content": ai_content}
+            
+            # 解析响应（带重试机制）
+            max_retries = 2
+            retry_count = 0
+            outline_data = None
+            
+            while retry_count <= max_retries:
+                try:
+                    # 使用 raise_on_error=True，解析失败时抛出异常
+                    outline_data = _parse_ai_response(ai_content, raise_on_error=True)
+                    break  # 解析成功，跳出循环
                     
-                    if chapter_outline:
-                        # 🔧 关键修复：确保每个大纲都有正确的 chapter_number
-                        chapter_outline["chapter_number"] = chapter_num
-                        outline_data.append(chapter_outline)
-                    else:
-                        logger.warning(f"⚠️ 第{chapter_num}章返回格式异常，使用fallback")
-                        outline_data.append({
-                            "title": f"第{chapter_num}章",
-                            "summary": "待补充",
-                            "content": "",
-                            "key_events": [],
-                            "character_development": "",
-                            "plot_progression": "",
-                            "chapter_number": chapter_num  # 🔧 确保包含章节号
-                        })
-            
-            # 记录失败情况
-            if failed_chapters:
-                yield await tracker.warning(
-                    f"第{str(batch_num + 1)}批中有 {len(failed_chapters)} 章生成失败（第{failed_chapters}章），已使用备用数据"
-                )
-            
-            yield await tracker.parsing(f"✅ 第{str(batch_num + 1)}批并发完成，正在整理...")
+                except JSONParseError as e:
+                    retry_count += 1
+                    if retry_count > max_retries:
+                        # 超过最大重试次数，使用fallback数据
+                        logger.error(f"❌ 第{batch_num + 1}批解析失败，已达最大重试次数({max_retries})，使用fallback数据")
+                        yield await tracker.warning(f"第{str(batch_num + 1)}批解析失败，使用备用数据")
+                        outline_data = _parse_ai_response(ai_content, raise_on_error=False)
+                        break
+                    
+                    logger.warning(f"⚠️ 第{batch_num + 1}批JSON解析失败（第{retry_count}次），正在重试...")
+                    yield await tracker.retry(retry_count, max_retries, f"第{str(batch_num + 1)}批解析失败")
+                    
+                    # 重试时重置生成进度
+                    tracker.reset_generating_progress()
+                    
+                    # 重新调用AI生成
+                    accumulated_text = ""
+                    chunk_count = 0
+                    
+                    # 在prompt中添加格式强调
+                    retry_prompt = prompt + "\n\n【重要提醒】请确保返回完整的JSON数组，不要截断。每个章节对象必须包含完整的title、summary等字段。"
+                    
+                    async for chunk in user_ai_service.generate_text_stream(
+                        prompt=retry_prompt,
+                        provider=provider_param,
+                        model=model_param
+                    ):
+                        chunk_count += 1
+                        accumulated_text += chunk
+                        
+                        # 发送内容块
+                        yield await tracker.generating_chunk(chunk)
+                        
+                        # 每20个块发送心跳
+                        if chunk_count % 20 == 0:
+                            yield await tracker.heartbeat()
+                    
+                    ai_content = accumulated_text
+                    ai_response = {"content": ai_content}
+                    logger.info(f"🔄 第{batch_num + 1}批重试生成完成，累计{len(ai_content)}字符")
             
             # 保存当前批次的大纲
             batch_outlines = await _save_outlines(
@@ -1680,18 +1645,11 @@ async def continue_outline_generator(
             except Exception as e:
                 logger.error(f"⚠️ 第{batch_num + 1}批组织校验失败（不影响主流程）: {e}")
             
-            # 记录历史（记录批次整体信息）
+            # 记录历史
             history = GenerationHistory(
                 project_id=project_id,
-                prompt=f"[续写批次{batch_num + 1}/{total_batches}] 并发生成{current_batch_size}章: 第{current_start_chapter}-{current_start_chapter + current_batch_size - 1}章",
-                generated_content=json.dumps({
-                    "batch_num": batch_num + 1,
-                    "chapter_count": current_batch_size,
-                    "start_chapter": current_start_chapter,
-                    "end_chapter": current_start_chapter + current_batch_size - 1,
-                    "failed_chapters": failed_chapters,
-                    "outlines_count": len(outline_data)
-                }, ensure_ascii=False),
+                prompt=f"[续写批次{batch_num + 1}/{total_batches}] {str(prompt)[:500]}",
+                generated_content=json.dumps(ai_response, ensure_ascii=False) if isinstance(ai_response, dict) else ai_response,
                 model=data.get("model") or "default"
             )
             db.add(history)
@@ -1757,6 +1715,523 @@ async def continue_outline_generator(
             await db.rollback()
             logger.info("大纲续写事务已回滚（异常）")
         yield await tracker.error(f"续写失败: {str(e)}")
+
+
+@router.post("/generate", summary="AI生成/续写大纲(后台任务)")
+async def generate_outline_task(
+    data: Dict[str, Any],
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user_ai_service: AIService = Depends(get_user_ai_service)
+):
+    """
+    使用后台任务生成或续写小说大纲（不怕断连，关闭浏览器也继续运行）
+    
+    返回task_id，前端通过 GET /api/tasks/{task_id} 轮询进度
+    
+    支持模式：
+    - auto/new/continue（同 generate-stream）
+    """
+    from app.services.background_task_service import background_task_service, TaskProgressTracker
+    from app.database import get_engine
+    from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession as NewAsyncSession
+
+    user_id = getattr(request.state, 'user_id', None)
+    project = await verify_project_access(data.get("project_id"), user_id, db)
+
+    # 判断模式
+    mode = data.get("mode", "auto")
+    existing_result = await db.execute(
+        select(Outline)
+        .where(Outline.project_id == data.get("project_id"))
+        .order_by(Outline.order_index)
+    )
+    existing_outlines = existing_result.scalars().all()
+
+    if mode == "auto":
+        mode = "continue" if existing_outlines else "new"
+
+    data["user_id"] = user_id
+    data["mode"] = mode
+
+    if mode == "continue" and not existing_outlines:
+        raise HTTPException(status_code=400, detail="续写模式需要已有大纲")
+
+    # 创建后台任务
+    task_type = "outline_new" if mode == "new" else "outline_continue"
+    task = await background_task_service.create_task(
+        user_id=user_id,
+        project_id=data.get("project_id"),
+        task_type=task_type,
+        task_input=data,
+        db=db
+    )
+
+    # 后台执行的函数
+    async def _run_outline_generation(task_id: str, user_id: str):
+        engine = await get_engine(user_id)
+        AsyncSessionLocal = async_sessionmaker(engine, class_=NewAsyncSession, expire_on_commit=False)
+        
+        async with AsyncSessionLocal() as bg_db:
+            tracker = TaskProgressTracker(task_id, user_id, "大纲")
+            try:
+                await tracker.start()
+                
+                # 获取AI服务（需要在后台创建新实例）
+                from app.api.settings import get_user_ai_service_from_db
+                bg_ai_service = await get_user_ai_service_from_db(user_id, bg_db)
+                
+                if mode == "new":
+                    await _run_new_outline_bg(data, bg_db, bg_ai_service, tracker)
+                else:
+                    await _run_continue_outline_bg(data, bg_db, bg_ai_service, tracker, user_id)
+                    
+            except Exception as e:
+                logger.error(f"❌ 后台大纲生成失败: {e}", exc_info=True)
+                await tracker.error(str(e))
+
+    await background_task_service.spawn_background_task(
+        task.id, user_id, _run_outline_generation
+    )
+
+    return {
+        "task_id": task.id,
+        "task_type": task_type,
+        "status": "pending",
+        "message": "任务已创建，请通过 GET /api/tasks/{task_id} 查询进度"
+    }
+
+
+async def _run_new_outline_bg(
+    data: Dict[str, Any],
+    db: AsyncSession,
+    user_ai_service: AIService,
+    tracker
+):
+    """后台执行全新大纲生成"""
+    from app.database import get_engine
+    from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession as BgAsyncSession
+
+    project_id = data.get("project_id")
+    chapter_count = int(data.get("chapter_count", 10))
+    user_id_for_mcp = data.get("user_id")
+
+    await tracker.loading("加载项目信息...", 0.3)
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        await tracker.error("项目不存在")
+        return
+
+    await tracker.loading(f"准备生成{chapter_count}章大纲...", 0.6)
+    characters_result = await db.execute(select(Character).where(Character.project_id == project_id))
+    characters = characters_result.scalars().all()
+    characters_info = _build_characters_info(characters)
+
+    if user_id_for_mcp:
+        user_ai_service.user_id = user_id_for_mcp
+        user_ai_service.db_session = db
+
+    await tracker.preparing("准备AI提示词...")
+    template = await PromptService.get_template("OUTLINE_CREATE", user_id_for_mcp, db)
+    prompt = PromptService.format_prompt(
+        template,
+        title=project.title,
+        theme=data.get("theme") or project.theme or "未设定",
+        genre=data.get("genre") or project.genre or "通用",
+        chapter_count=chapter_count,
+        narrative_perspective=data.get("narrative_perspective") or "第三人称",
+        time_period=project.world_time_period or "未设定",
+        location=project.world_location or "未设定",
+        atmosphere=project.world_atmosphere or "未设定",
+        rules=project.world_rules or "未设定",
+        characters_info=characters_info or "暂无角色信息",
+        requirements=data.get("requirements") or "",
+        mcp_references=""
+    )
+
+    model_param = data.get("model")
+    provider_param = data.get("provider")
+
+    estimated_total = chapter_count * 1000
+    accumulated_text = ""
+    chunk_count = 0
+
+    await tracker.generating(current_chars=0, estimated_total=estimated_total)
+
+    async for chunk in user_ai_service.generate_text_stream(
+        prompt=prompt, provider=provider_param, model=model_param
+    ):
+        chunk_count += 1
+        accumulated_text += chunk
+        if chunk_count % 10 == 0:
+            if await tracker.check_cancelled():
+                await tracker.error("任务已取消")
+                return
+            await tracker.generating(
+                current_chars=len(accumulated_text),
+                estimated_total=estimated_total
+            )
+
+    await tracker.parsing("解析大纲数据...")
+    ai_content = accumulated_text
+
+    # 解析响应（带重试）
+    max_retries = 2
+    retry_count = 0
+    outline_data = None
+
+    while retry_count <= max_retries:
+        try:
+            outline_data = _parse_ai_response(ai_content, raise_on_error=True)
+            break
+        except JSONParseError:
+            retry_count += 1
+            if retry_count > max_retries:
+                outline_data = _parse_ai_response(ai_content, raise_on_error=False)
+                break
+            await tracker.retry(retry_count, max_retries, "JSON解析失败")
+            tracker.reset_generating_progress()
+            accumulated_text = ""
+            retry_prompt = prompt + "\n\n【重要提醒】请确保返回完整的JSON数组。"
+            async for chunk in user_ai_service.generate_text_stream(
+                prompt=retry_prompt, provider=provider_param, model=model_param
+            ):
+                accumulated_text += chunk
+            ai_content = accumulated_text
+
+    # ✅ P0修复：先保存新数据，再删除旧数据
+    await tracker.saving("保存新大纲到数据库...", 0.2)
+    outlines = await _save_outlines(project_id, outline_data, db, start_index=1)
+    await db.commit()  # 先提交新数据！
+    logger.info(f"✅ 新大纲已保存: {len(outlines)} 章")
+
+    # 新数据安全后，再清理旧数据
+    await tracker.saving("清理旧数据...", 0.6)
+    try:
+        from sqlalchemy import delete as sql_delete
+
+        # 获取旧大纲（不包括刚保存的）
+        new_outline_ids = [o.id for o in outlines]
+        old_outlines_result = await db.execute(
+            select(Outline).where(
+                Outline.project_id == project_id,
+                ~Outline.id.in_(new_outline_ids)
+            )
+        )
+        old_outlines = old_outlines_result.scalars().all()
+
+        if old_outlines:
+            old_outline_ids = [o.id for o in old_outlines]
+
+            # 清理旧章节
+            old_chapters_result = await db.execute(
+                select(Chapter).where(
+                    Chapter.project_id == project_id,
+                    ~Chapter.id.in_([ch.id for ch in await db.execute(
+                        select(Chapter).where(Chapter.outline_id.in_(new_outline_ids) if new_outline_ids else False)
+                    ).scalars().all()] if new_outline_ids else [])
+                )
+            )
+            # 简化：删除不属于新大纲的旧章节
+            # 先获取新大纲对应的章节（one-to-one模式下通过chapter_number匹配）
+            new_order_indexes = [o.order_index for o in outlines]
+
+            if project.outline_mode == 'one-to-one':
+                old_chapters_result = await db.execute(
+                    select(Chapter).where(
+                        Chapter.project_id == project_id,
+                        ~Chapter.chapter_number.in_(new_order_indexes)
+                    )
+                )
+            else:
+                old_chapters_result = await db.execute(
+                    select(Chapter).where(
+                        Chapter.project_id == project_id,
+                        Chapter.outline_id.in_(old_outline_ids)
+                    )
+                )
+
+            old_chapters = old_chapters_result.scalars().all()
+            deleted_word_count = sum(ch.word_count or 0 for ch in old_chapters)
+
+            # 清理伏笔和记忆
+            for ch in old_chapters:
+                try:
+                    await memory_service.delete_chapter_memories(
+                        user_id=user_id_for_mcp, project_id=project_id, chapter_id=ch.id
+                    )
+                except Exception:
+                    pass
+                try:
+                    await foreshadow_service.delete_chapter_foreshadows(
+                        db=db, project_id=project_id, chapter_id=ch.id, only_analysis_source=True
+                    )
+                except Exception:
+                    pass
+
+            # 删除旧章节
+            if project.outline_mode == 'one-to-one':
+                await db.execute(
+                    sql_delete(Chapter).where(
+                        Chapter.project_id == project_id,
+                        ~Chapter.chapter_number.in_(new_order_indexes)
+                    )
+                )
+            else:
+                await db.execute(
+                    sql_delete(Chapter).where(Chapter.outline_id.in_(old_outline_ids))
+                )
+
+            if deleted_word_count > 0:
+                project.current_words = max(0, project.current_words - deleted_word_count)
+
+            # 清理伏笔
+            try:
+                await foreshadow_service.clear_project_foreshadows_for_reset(db, project_id)
+            except Exception:
+                pass
+
+            # 清理分析
+            try:
+                from app.models.memory import PlotAnalysis
+                await db.execute(sql_delete(PlotAnalysis).where(PlotAnalysis.project_id == project_id))
+            except Exception:
+                pass
+
+            # 删除旧大纲
+            await db.execute(
+                sql_delete(Outline).where(Outline.id.in_(old_outline_ids))
+            )
+
+            await db.commit()
+            logger.info(f"✅ 旧数据清理完成: 删除 {len(old_outlines)} 个旧大纲, {len(old_chapters)} 个旧章节")
+
+    except Exception as e:
+        logger.error(f"❌ 清理旧数据失败（新数据已安全保存）: {e}")
+        # 新数据已保存，旧数据清理失败不影响
+
+    # 角色校验
+    await tracker.saving("🎭 校验角色信息...", 0.7)
+    try:
+        await _check_and_create_missing_characters_from_outlines(
+            outline_data=outline_data, project_id=project_id, db=db,
+            user_ai_service=user_ai_service, user_id=data.get("user_id"),
+            enable_mcp=data.get("enable_mcp", True), tracker=tracker
+        )
+    except Exception:
+        pass
+
+    # 组织校验
+    try:
+        await _check_and_create_missing_organizations_from_outlines(
+            outline_data=outline_data, project_id=project_id, db=db,
+            user_ai_service=user_ai_service, user_id=data.get("user_id"),
+            enable_mcp=data.get("enable_mcp", True), tracker=tracker
+        )
+    except Exception:
+        pass
+
+    # 保存结果到任务记录
+    result_data = {
+        "message": f"成功生成{len(outlines)}章大纲",
+        "total_chapters": len(outlines),
+        "outline_ids": [o.id for o in outlines]
+    }
+
+    # 更新任务结果
+    from app.models.background_task import BackgroundTask
+    task_result = await db.execute(select(BackgroundTask).where(BackgroundTask.id == tracker.task_id))
+    bg_task = task_result.scalar_one_or_none()
+    if bg_task:
+        bg_task.task_result = result_data
+        await db.commit()
+
+    await tracker.complete(f"成功生成{len(outlines)}章大纲")
+    logger.info(f"✅ 后台大纲生成完成: {len(outlines)} 章")
+
+
+async def _run_continue_outline_bg(
+    data: Dict[str, Any],
+    db: AsyncSession,
+    user_ai_service: AIService,
+    tracker,
+    user_id: str
+):
+    """后台执行大纲续写"""
+    project_id = data.get("project_id")
+    total_chapters = int(data.get("chapter_count", 5))
+
+    await tracker.loading("加载项目信息...", 0.2)
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        await tracker.error("项目不存在")
+        return
+
+    existing_result = await db.execute(
+        select(Outline).where(Outline.project_id == project_id).order_by(Outline.order_index)
+    )
+    existing_outlines = existing_result.scalars().all()
+    if not existing_outlines:
+        await tracker.error("续写模式需要已有大纲")
+        return
+
+    last_chapter_number = existing_outlines[-1].order_index
+
+    characters_result = await db.execute(select(Character).where(Character.project_id == project_id))
+    characters = characters_result.scalars().all()
+
+    batch_size = 5
+    total_batches = (total_chapters + batch_size - 1) // batch_size
+    all_new_outlines = []
+    current_start_chapter = last_chapter_number + 1
+
+    stage_instructions = {
+        "development": "继续展开情节，深化角色关系",
+        "climax": "进入故事高潮，矛盾激化",
+        "ending": "解决主要冲突，给出结局"
+    }
+    stage_instruction = stage_instructions.get(data.get("plot_stage", "development"), "")
+
+    for batch_num in range(total_batches):
+        if await tracker.check_cancelled():
+            await tracker.error("任务已取消")
+            return
+
+        remaining = total_chapters - len(all_new_outlines)
+        current_batch_size = min(batch_size, remaining)
+        tracker.reset_generating_progress()
+
+        await tracker.generating(
+            message=f"📝 第{batch_num + 1}/{total_batches}批: 生成第{current_start_chapter}-{current_start_chapter + current_batch_size - 1}章"
+        )
+
+        latest_result = await db.execute(
+            select(Outline).where(Outline.project_id == project_id).order_by(Outline.order_index)
+        )
+        latest_outlines = latest_result.scalars().all()
+
+        context = await _build_outline_continue_context(
+            project=project, latest_outlines=latest_outlines, characters=characters,
+            chapter_count=current_batch_size,
+            plot_stage=data.get("plot_stage", "development"),
+            story_direction=data.get("story_direction", "自然延续"),
+            requirements=data.get("requirements", ""), db=db
+        )
+
+        user_ai_service.user_id = user_id
+        user_ai_service.db_session = db
+
+        # 获取伏笔提醒
+        foreshadow_reminders_text = "暂无需要关注的伏笔"
+        try:
+            foreshadow_context = await foreshadow_service.build_chapter_context(
+                db=db, project_id=project_id, chapter_number=current_start_chapter,
+                include_pending=False, include_overdue=True, lookahead=10
+            )
+            if foreshadow_context and foreshadow_context.get("context_text"):
+                foreshadow_reminders_text = foreshadow_context["context_text"]
+        except Exception:
+            pass
+
+        template = await PromptService.get_template("OUTLINE_CONTINUE", user_id, db)
+        prompt = PromptService.format_prompt(
+            template,
+            title=project.title, theme=project.theme or "未设定",
+            genre=project.genre or "通用",
+            narrative_perspective=project.narrative_perspective or "第三人称",
+            time_period=project.world_time_period or "未设定",
+            location=project.world_location or "未设定",
+            atmosphere=project.world_atmosphere or "未设定",
+            rules=project.world_rules or "未设定",
+            recent_outlines=context['recent_outlines'],
+            characters_info=context['characters_info'],
+            foreshadow_reminders=foreshadow_reminders_text,
+            chapter_count=current_batch_size,
+            start_chapter=current_start_chapter,
+            end_chapter=current_start_chapter + current_batch_size - 1,
+            current_chapter_count=len(latest_outlines),
+            plot_stage_instruction=stage_instruction,
+            story_direction=data.get("story_direction", "自然延续"),
+            requirements=data.get("requirements", ""),
+            mcp_references=""
+        )
+
+        accumulated_text = ""
+        chunk_count = 0
+        estimated_chars = current_batch_size * 1000
+
+        async for chunk in user_ai_service.generate_text_stream(
+            prompt=prompt, provider=data.get("provider"), model=data.get("model")
+        ):
+            chunk_count += 1
+            accumulated_text += chunk
+            if chunk_count % 10 == 0:
+                await tracker.generating(
+                    current_chars=len(accumulated_text), estimated_total=estimated_chars,
+                    message=f"📝 第{batch_num + 1}/{total_batches}批生成中..."
+                )
+
+        await tracker.parsing(f"解析第{batch_num + 1}批数据...")
+
+        # 解析
+        max_retries = 2
+        retry_count = 0
+        outline_data = None
+        while retry_count <= max_retries:
+            try:
+                outline_data = _parse_ai_response(accumulated_text, raise_on_error=True)
+                break
+            except JSONParseError:
+                retry_count += 1
+                if retry_count > max_retries:
+                    outline_data = _parse_ai_response(accumulated_text, raise_on_error=False)
+                    break
+                await tracker.retry(retry_count, max_retries, "JSON解析失败")
+                tracker.reset_generating_progress()
+                accumulated_text = ""
+                retry_prompt = prompt + "\n\n【重要提醒】请确保返回完整的JSON数组。"
+                async for chunk in user_ai_service.generate_text_stream(
+                    prompt=retry_prompt, provider=data.get("provider"), model=data.get("model")
+                ):
+                    accumulated_text += chunk
+
+        # 保存当前批次
+        await tracker.saving(f"保存第{batch_num + 1}批大纲...", 0.5)
+        batch_outlines = await _save_outlines(
+            project_id, outline_data, db, start_index=current_start_chapter
+        )
+        await db.commit()
+        all_new_outlines.extend(batch_outlines)
+        current_start_chapter += current_batch_size
+
+        # 角色校验
+        try:
+            await _check_and_create_missing_characters_from_outlines(
+                outline_data=outline_data, project_id=project_id, db=db,
+                user_ai_service=user_ai_service, user_id=user_id,
+                enable_mcp=data.get("enable_mcp", True), tracker=tracker
+            )
+            await db.commit()
+        except Exception:
+            pass
+
+    # 保存结果
+    result_data = {
+        "message": f"成功续写{len(all_new_outlines)}章大纲",
+        "total_chapters": len(all_new_outlines),
+        "outline_ids": [o.id for o in all_new_outlines]
+    }
+    from app.models.background_task import BackgroundTask
+    task_result = await db.execute(select(BackgroundTask).where(BackgroundTask.id == tracker.task_id))
+    bg_task = task_result.scalar_one_or_none()
+    if bg_task:
+        bg_task.task_result = result_data
+        await db.commit()
+
+    await tracker.complete(f"成功续写{len(all_new_outlines)}章大纲")
+    logger.info(f"✅ 后台大纲续写完成: {len(all_new_outlines)} 章")
 
 
 @router.post("/generate-stream", summary="AI生成/续写大纲(SSE流式)")

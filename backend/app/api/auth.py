@@ -6,7 +6,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from typing import Optional
 import hashlib
-import random
+import secrets
 import re
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
@@ -21,6 +21,7 @@ from app.database import get_engine
 from app.models.user import User as UserModel
 from app.models.settings import Settings as SettingsModel
 from app.services.email_service import email_service
+from app.security import create_session_token
 
 # 中国时区 UTC+8
 CHINA_TZ = timezone(timedelta(hours=8))
@@ -43,6 +44,7 @@ _state_storage = {}
 
 # 邮箱验证码临时存储（生产环境应使用 Redis）
 _email_verification_storage = {}
+MAX_VERIFICATION_ATTEMPTS = 5
 
 EMAIL_REGEX = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
@@ -243,15 +245,25 @@ def _validate_password(password: str):
         raise HTTPException(status_code=400, detail="密码长度至少为6个字符")
 
 
+def _is_session_cookie_secure() -> bool:
+    """判断会话 Cookie 是否启用 Secure 标记。"""
+    if settings.SESSION_COOKIE_SECURE is not None:
+        return settings.SESSION_COOKIE_SECURE
+    return not settings.debug
+
+
 def _set_login_cookies(response: Response, user_id: str):
     """设置登录 Cookie"""
     max_age = settings.SESSION_EXPIRE_MINUTES * 60
+    session_token = create_session_token(user_id, max_age)
+    cookie_secure = _is_session_cookie_secure()
     response.set_cookie(
-        key="user_id",
-        value=user_id,
+        key="session_token",
+        value=session_token,
         max_age=max_age,
         httponly=True,
-        samesite="lax"
+        samesite="lax",
+        secure=cookie_secure,
     )
 
     china_now = get_china_now()
@@ -263,12 +275,13 @@ def _set_login_cookies(response: Response, user_id: str):
         value=str(expire_at),
         max_age=max_age,
         httponly=False,
-        samesite="lax"
+        samesite="lax",
+        secure=cookie_secure,
     )
 
 
 def _generate_verification_code() -> str:
-    return f"{random.randint(0, 999999):06d}"
+    return f"{secrets.randbelow(1000000):06d}"
 
 
 def _build_verification_mail_content(scene: str, code: str, ttl_minutes: int) -> tuple[str, str, str]:
@@ -456,6 +469,7 @@ async def send_email_verification_code(request: EmailSendCodeRequest):
         "code": code,
         "expires_at": expires_at,
         "last_sent_at": now,
+        "attempts": 0,
     }
 
     logger.info(f"[邮箱验证码] 场景={scene} 已发送到 {email}")
@@ -493,6 +507,10 @@ async def email_register(request: EmailRegisterRequest, response: Response):
         raise HTTPException(status_code=400, detail="验证码已过期，请重新发送")
 
     if cached["code"] != code:
+        cached["attempts"] = cached.get("attempts", 0) + 1
+        if cached["attempts"] >= MAX_VERIFICATION_ATTEMPTS:
+            _email_verification_storage.pop(_get_verification_storage_key("register", email), None)
+            raise HTTPException(status_code=429, detail="验证码错误次数过多，请重新发送")
         raise HTTPException(status_code=400, detail="验证码错误")
 
     existing_user = await _find_user_by_email(email)
@@ -541,6 +559,10 @@ async def email_login(request: EmailLoginRequest, response: Response):
         raise HTTPException(status_code=400, detail="登录验证码已过期，请重新发送")
 
     if cached["code"] != code:
+        cached["attempts"] = cached.get("attempts", 0) + 1
+        if cached["attempts"] >= MAX_VERIFICATION_ATTEMPTS:
+            _email_verification_storage.pop(storage_key, None)
+            raise HTTPException(status_code=429, detail="验证码错误次数过多，请重新发送")
         raise HTTPException(status_code=400, detail="登录验证码错误")
 
     _email_verification_storage.pop(storage_key, None)
@@ -588,6 +610,10 @@ async def email_reset_password(request: EmailResetPasswordRequest):
         raise HTTPException(status_code=400, detail="重置密码验证码已过期，请重新发送")
 
     if cached["code"] != code:
+        cached["attempts"] = cached.get("attempts", 0) + 1
+        if cached["attempts"] >= MAX_VERIFICATION_ATTEMPTS:
+            _email_verification_storage.pop(storage_key, None)
+            raise HTTPException(status_code=429, detail="验证码错误次数过多，请重新发送")
         raise HTTPException(status_code=400, detail="重置密码验证码错误")
 
     await password_manager.set_password(user.user_id, email, request.new_password)
@@ -675,7 +701,8 @@ async def _handle_callback(
             value="true",
             max_age=300,
             httponly=False,
-            samesite="lax"
+            samesite="lax",
+            secure=_is_session_cookie_secure(),
         )
         logger.info(f"✅ [OAuth登录] 用户 {user.user_id} 首次登录，已设置 first_login 标记")
 
@@ -757,6 +784,7 @@ async def logout(request: Request, response: Response):
         logger.info(f"🚪 [退出] 用户 {user_id} 退出登录")
 
     response.delete_cookie("user_id")
+    response.delete_cookie("session_token")
     response.delete_cookie("session_expire_at")
     return {"message": "退出登录成功"}
 
@@ -782,8 +810,6 @@ async def get_password_status(request: Request):
     username = await password_manager.get_username(user.user_id)
 
     default_password = None
-    if has_password and not has_custom:
-        default_password = f"{user.username}@666"
 
     return PasswordStatusResponse(
         has_password=has_password,
