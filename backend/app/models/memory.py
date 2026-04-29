@@ -146,7 +146,7 @@ class PlotAnalysis(Base):
     
     # 场景和氛围
     scenes = Column(JSON, comment="场景列表: [{location: '地点', atmosphere: '氛围', duration: '时长'}]")
-    pacing = Column(String(50), comment="节奏: slow|moderate|fast|varied")
+    pacing = Column(Text, comment="节奏描述: 可以是简单标签(slow/moderate/fast/varied)或详细描述")
     
     # 质量评分
     overall_quality_score = Column(Float, comment="整体质量评分 0.0-10.0")

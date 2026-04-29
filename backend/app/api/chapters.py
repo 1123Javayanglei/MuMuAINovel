@@ -1012,8 +1012,10 @@ async def analyze_chapter_background(
             else:
                 # 创建新记录
                 logger.info(f"  创建新的分析记录")
-                # 确保 pacing 是字符串类型（AI可能返回数值）
+                # 确保 pacing 是字符串类型且不超过50字符（AI可能返回数值或过长描述）
                 pacing_value = analysis_result.get('pacing', 'moderate')
+                logger.info(f"🔍 [DEBUG] AI返回的pacing原始值: {repr(pacing_value)}, 类型: {type(pacing_value).__name__}, 长度: {len(str(pacing_value)) if pacing_value else 0}")
+                
                 if isinstance(pacing_value, (int, float)):
                     # 如果是数值，转换为描述性字符串
                     if pacing_value >= 8:
@@ -1024,6 +1026,11 @@ async def analyze_chapter_background(
                         pacing_str = 'slow'
                 else:
                     pacing_str = str(pacing_value) if pacing_value else 'moderate'
+                    # 限制长度为50字符
+                    if len(pacing_str) > 50:
+                        pacing_str = pacing_str[:47] + '...'
+                
+                logger.info(f"✅ [DEBUG] 处理后的pacing值: {repr(pacing_str)}, 长度: {len(pacing_str)}")
                 
                 plot_analysis = PlotAnalysis(
                     chapter_id=chapter_id,

@@ -95,8 +95,10 @@ async def analyze_chapter(
             raise HTTPException(status_code=500, detail="剧情分析失败")
         
         # 保存分析结果到数据库
-        # 确保 pacing 是字符串类型（AI可能返回数值）
+        # 确保 pacing 是字符串类型且不超过50字符（AI可能返回数值或过长描述）
         pacing_value = analysis_result.get('pacing')
+        logger.info(f"🔍 [DEBUG] AI返回的pacing原始值: {repr(pacing_value)}, 类型: {type(pacing_value).__name__}, 长度: {len(str(pacing_value)) if pacing_value else 0}")
+        
         if isinstance(pacing_value, (int, float)):
             # 如果是数值，转换为描述性字符串
             if pacing_value >= 8:
@@ -107,6 +109,11 @@ async def analyze_chapter(
                 pacing_str = 'slow'
         else:
             pacing_str = str(pacing_value) if pacing_value else None
+            # 限制长度为50字符
+            if pacing_str and len(pacing_str) > 50:
+                pacing_str = pacing_str[:47] + '...'
+        
+        logger.info(f"✅ [DEBUG] 处理后的pacing值: {repr(pacing_str)}, 长度: {len(pacing_str) if pacing_str else 0}")
         
         plot_analysis = PlotAnalysis(
             id=str(uuid.uuid4()),
