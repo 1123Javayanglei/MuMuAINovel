@@ -3,6 +3,7 @@
 
 # 构建参数
 ARG USE_CN_MIRROR=false
+ARG PIP_NO_CACHE=false
 
 # 阶段1: 构建前端
 FROM node:22-alpine AS frontend-builder
@@ -38,6 +39,7 @@ RUN npm run build
 FROM python:3.11-slim
 
 ARG USE_CN_MIRROR
+ARG PIP_NO_CACHE
 ARG TARGETPLATFORM
 ARG TARGETARCH
 
@@ -63,12 +65,17 @@ COPY backend/requirements.txt ./
 # 安装 Python 依赖
 # 先安装 torch CPU版本（~200MB vs 完整版~2GB，节省90%下载时间）
 # 对于embedding场景，CPU版本完全够用
-RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
-        pip install --no-cache-dir torch==2.8.0 --index-url https://mirrors.aliyun.com/pypi/simple/ --extra-index-url https://download.pytorch.org/whl/cpu && \
-        pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/; \
+RUN if [ "$PIP_NO_CACHE" = "true" ]; then \
+        NO_CACHE_FLAG="--no-cache-dir"; \
     else \
-        pip install --no-cache-dir torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu && \
-        pip install --no-cache-dir -r requirements.txt; \
+        NO_CACHE_FLAG=""; \
+    fi && \
+    if [ "$USE_CN_MIRROR" = "true" ]; then \
+        pip install $NO_CACHE_FLAG torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://mirrors.aliyun.com/pypi/simple/ && \
+        pip install $NO_CACHE_FLAG -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/ --extra-index-url https://download.pytorch.org/whl/cpu; \
+    else \
+        pip install $NO_CACHE_FLAG torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu && \
+        pip install $NO_CACHE_FLAG -r requirements.txt; \
     fi
 
 # 创建embedding目录
@@ -79,7 +86,10 @@ ENV SENTENCE_TRANSFORMERS_HOME=/app/embedding
 
 # 下载 embedding 模型（从 HuggingFace）
 # 使用 Python 脚本预下载模型，这样运行时不需要网络
-RUN python -c "\
+RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
+        export HF_ENDPOINT=https://hf-mirror.com; \
+    fi && \
+    python -c "\
 from sentence_transformers import SentenceTransformer; \
 import os; \
 os.environ['SENTENCE_TRANSFORMERS_HOME'] = '/app/embedding'; \
