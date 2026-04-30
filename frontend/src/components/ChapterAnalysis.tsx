@@ -155,7 +155,7 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
       } catch (err) {
         console.error('轮询错误:', err);
       }
-    }, 2000);
+    }, 10000);  // 章节分析通常需要1分钟以上，10秒轮询足够
 
     // 5分钟超时
     setTimeout(() => clearInterval(pollInterval), 300000);

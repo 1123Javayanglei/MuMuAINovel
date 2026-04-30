@@ -16,7 +16,7 @@ import { eventBus } from '../store/eventBus';
 
 interface FloatingTaskPanelProps {
   projectId: string;
-  autoRefreshInterval?: number; // 自动刷新间隔（毫秒），默认3000
+  autoRefreshInterval?: number; // 自动刷新间隔（毫秒），默认10000
 }
 
 /**
@@ -25,7 +25,7 @@ interface FloatingTaskPanelProps {
  */
 export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
   projectId,
-  autoRefreshInterval = 3000,
+  autoRefreshInterval = 10000,
 }) => {
   const [taskList, setTaskList] = useState<TaskStatus[]>([]);
   const [loading, setLoading] = useState(false);

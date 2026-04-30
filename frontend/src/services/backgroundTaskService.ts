@@ -148,7 +148,7 @@ export function pollTaskUntilComplete(
   onProgress: TaskProgressCallback,
   onComplete: TaskCompleteCallback,
   onError: TaskErrorCallback,
-  intervalMs: number = 2000
+  intervalMs: number = 10000
 ): () => void {
   let cancelled = false;
   let timerId: ReturnType<typeof setTimeout>;

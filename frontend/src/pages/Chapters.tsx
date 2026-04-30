@@ -1417,8 +1417,8 @@ export default function Chapters() {
     // 立即执行一次
     poll();
 
-    // 每2秒轮询一次
-    batchPollingIntervalRef.current = window.setInterval(poll, 2000);
+    // 每10秒轮询一次（章节生成通常需要1分钟以上）
+    batchPollingIntervalRef.current = window.setInterval(poll, 10000);
   };
 
   // 取消批量生成
